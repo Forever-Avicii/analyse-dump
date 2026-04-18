@@ -100,3 +100,37 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli link-xrefs \
   --js-snapshot-id 2 \
   --kt-snapshot-id 1
 ```
+
+Find shortest holder path to a language root from an address:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli find-root-path \
+  --db ./out/heap.db \
+  --addr 0x5b97495fd0
+```
+
+Optional search limits:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli find-root-path \
+  --db ./out/heap.db \
+  --addr 0x5b97495fd0 \
+  --max-depth 10 \
+  --max-fanout 512
+```
+
+## TODO
+
+- Replace type-name root heuristics with real GC root extraction from snapshots (both HPROF and ArkTS heapsnapshot).
+- Populate and use a real `roots` table, then make `find-root-path` stop on true roots instead of heuristics.
+- Add cross-language orchestration command: run JS/Kotlin root-path search step-by-step through `xrefs/cross_links` bridges.
+- Support Top-K shortest root paths (not only one shortest path), with stable ordering and deduped output.
+- Add configurable pseudo-root behavior (`addr in {0,1}`) instead of hardcoded default.
+- Improve root-path labeling: include decoded field/property names for each hop with clearer source/target semantics.
+- Add cycle detection in orchestration layer using visited root/bridge state across languages.
+- Add optional dominator-tree based ranking for severity (after true-root pipeline is ready).
+- Add schema constraints/index strategy for long-term quality (e.g., uniqueness guards for object identity per snapshot/lang).
+- Add compact/analysis modes: temporary indexes during extraction, then drop and `VACUUM` for smaller output DB.
+- Expand rule engine for vendor differences (multi-source fields, virtual-node patterns, mixed radix parsing).
+- Add integration tests with synthetic cross-language leak fixtures and expected-path assertions.
+- Add edge-type policy validation for strong-reference analysis (default exclude weak/shortcut, verify hidden/internal semantics per runtime).

@@ -6,3 +6,5 @@ __pycache__/
 
 out/
 *.db
+.deps/
+*.egg-info/

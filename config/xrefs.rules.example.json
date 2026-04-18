@@ -1,0 +1,24 @@
+{
+  "rules": [
+    {
+      "name": "arkts_holds_kotlin_stable_ref",
+      "type": "arkts_holds_kotlin_stable_ref",
+      "ref_kind": "stable_ref",
+      "js_property": "__knapi_stable_ref__",
+      "js_value_format": "hex",
+      "js_value_search_depth": 3,
+      "kt_stable_ref_type": "kotlin.native.internal.StableRef"
+    },
+    {
+      "name": "kotlin_holds_arkts_napi_ref",
+      "type": "kotlin_holds_arkts_napi_ref",
+      "ref_kind": "napi_ref",
+      "js_property": "knapi_refs_test",
+      "js_value_format": "hex",
+      "js_edge_types": ["property"],
+      "js_value_search_depth": 2,
+      "kt_field": "ref",
+      "kt_value_format": "dec"
+    }
+  ]
+}

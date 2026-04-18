@@ -1,17 +1,25 @@
 from __future__ import annotations
 
-import json
 from array import array
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import ijson
 
 from analyse_dump import db
-
-
-def _to_addr(value: int) -> str:
-    return f"0x{int(value):x}"
+from analyse_dump.const import (
+    EDGE_ARRAY_ELEMENT,
+    EDGE_ELEMENT,
+    EDGE_HIDDEN,
+    EDGE_PROPERTY,
+    EDGE_SHORTCUT,
+    EDGE_TYPE_BY_NAME,
+    EDGE_UNKNOWN,
+    EDGE_WEAK,
+    LANG_JS,
+    NAME_KIND_ARRAY_INDEX,
+    NAME_KIND_STRING_INDEX,
+)
 
 
 def _read_snapshot_header(snapshot_path: Path) -> dict:
@@ -19,6 +27,10 @@ def _read_snapshot_header(snapshot_path: Path) -> dict:
         for item in ijson.items(f, "snapshot"):
             return item
     raise ValueError(f"Invalid heapsnapshot file: missing 'snapshot' object in {snapshot_path}")
+
+
+def _edge_type_code(name: str) -> int:
+    return EDGE_TYPE_BY_NAME.get(name, EDGE_UNKNOWN)
 
 
 def import_heapsnapshot(
@@ -87,7 +99,7 @@ def import_heapsnapshot(
     node_ids = array("Q")
     node_edge_counts = array("I")
 
-    objects_batch: List[Tuple[int, str, str, str, Optional[int], Optional[int], Optional[str]]] = []
+    objects_batch: List[Tuple[int, int, int, Optional[str], Optional[int], Optional[int], Optional[int]]] = []
     chunk: List[int] = []
     with snapshot_path.open("rb") as f:
         for num in ijson.items(f, "nodes.item"):
@@ -106,9 +118,7 @@ def import_heapsnapshot(
             self_size = chunk[node_self_size_i] if node_self_size_i < len(chunk) else None
             edge_count = chunk[node_edge_count_i] if node_edge_count_i < len(chunk) else 0
 
-            obj_addr = _to_addr(node_id)
-            extra = json.dumps({"name_index": node_name_index}, ensure_ascii=True)
-            objects_batch.append((snapshot_id, "js", obj_addr, node_type, self_size, None, extra))
+            objects_batch.append((snapshot_id, LANG_JS, int(node_id), node_type, self_size, None, int(node_name_index)))
 
             node_ids.append(int(node_id))
             node_edge_counts.append(int(edge_count))
@@ -125,7 +135,7 @@ def import_heapsnapshot(
     if objects_batch:
         db.insert_objects(conn, objects_batch)
 
-    edge_batch: List[Tuple[int, str, str, Optional[str], Optional[str]]] = []
+    edge_batch: List[Tuple[int, int, int, int, int, Optional[int], Optional[str]]] = []
     chunk = []
     from_node_index = 0
     remaining_from_edges = int(node_edge_counts[0]) if len(node_edge_counts) > 0 else 0
@@ -145,27 +155,28 @@ def import_heapsnapshot(
                 break
 
             edge_type_num = chunk[edge_type_i]
-            edge_type = (
+            edge_type_name = (
                 edge_type_names[edge_type_num]
                 if 0 <= edge_type_num < len(edge_type_names)
                 else f"type_{edge_type_num}"
             )
-            edge_name_or_index = chunk[edge_name_i]
+            edge_type_code = _edge_type_code(edge_type_name)
+            edge_name_or_index = int(chunk[edge_name_i])
             to_node_offset = chunk[edge_to_node_i]
 
-            from_addr = _to_addr(node_ids[from_node_index])
+            from_addr = int(node_ids[from_node_index])
             to_node_index = to_node_offset // n_stride
             if 0 <= to_node_index < len(node_ids):
-                to_addr = _to_addr(node_ids[to_node_index])
+                to_addr = int(node_ids[to_node_index])
             else:
-                to_addr = _to_addr(0)
+                to_addr = 0
 
-            if edge_type in ("element", "hidden"):
-                field_name = f"i:{edge_name_or_index}"
+            if edge_type_code in (EDGE_ELEMENT, EDGE_HIDDEN):
+                name_kind = NAME_KIND_ARRAY_INDEX
             else:
-                field_name = f"s:{edge_name_or_index}"
+                name_kind = NAME_KIND_STRING_INDEX
 
-            edge_batch.append((snapshot_id, from_addr, to_addr, edge_type, field_name))
+            edge_batch.append((snapshot_id, from_addr, to_addr, edge_type_code, name_kind, edge_name_or_index, None))
 
             remaining_from_edges = max(remaining_from_edges - 1, 0)
 

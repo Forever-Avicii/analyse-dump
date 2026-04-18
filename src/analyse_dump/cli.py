@@ -6,6 +6,7 @@ from pathlib import Path
 from analyse_dump import db
 from analyse_dump.importers.heapsnapshot_importer import import_heapsnapshot
 from analyse_dump.importers.hprof_importer import import_hprof
+from analyse_dump.linker import link_with_config
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -32,6 +33,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not persist the strings table",
     )
+
+    p_link = sub.add_parser("link-xrefs", help="build xrefs and cross_links by config rules")
+    p_link.add_argument("--db", required=True, type=Path, help="SQLite db path")
+    p_link.add_argument("--config", required=True, type=Path, help="JSON config path")
+    p_link.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
+    p_link.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
 
     return parser
 
@@ -64,6 +71,20 @@ def main() -> None:
             store_strings=not args.skip_strings,
         )
         print(f"Imported heapsnapshot snapshot_id={snapshot_id} -> {args.db}")
+        return
+
+    if args.command == "link-xrefs":
+        results = link_with_config(
+            db_path=args.db,
+            config_path=args.config,
+            js_snapshot_id=args.js_snapshot_id,
+            kt_snapshot_id=args.kt_snapshot_id,
+        )
+        for item in results:
+            print(
+                f"rule={item['rule']} ref_kind={item['ref_kind']} "
+                f"js_xrefs={item['js_xrefs']} kt_xrefs={item['kt_xrefs']} cross_links={item['cross_links']}"
+            )
         return
 
     parser.error("Unknown command")

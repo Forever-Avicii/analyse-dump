@@ -14,51 +14,56 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE TABLE IF NOT EXISTS objects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   snapshot_id INTEGER NOT NULL,
-  lang TEXT NOT NULL,
-  obj_addr TEXT NOT NULL,
+  lang INTEGER NOT NULL,                 -- js=0, kotlin=1
+  obj_addr INTEGER NOT NULL,
   type_name TEXT,
   shallow_size INTEGER,
-  retained_size INTEGER,
-  extra_json TEXT,
+  heap_index INTEGER,
+  name_index INTEGER,
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
 CREATE TABLE IF NOT EXISTS edges (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   snapshot_id INTEGER NOT NULL,
-  from_obj_addr TEXT NOT NULL,
-  to_obj_addr TEXT NOT NULL,
-  edge_type TEXT,
-  field_name_or_index TEXT,
+  from_obj_addr INTEGER NOT NULL,
+  to_obj_addr INTEGER NOT NULL,
+  edge_type INTEGER NOT NULL,            -- enum, see const.py
+  name_kind INTEGER NOT NULL DEFAULT 0,  -- none=0, string_index=1, array_index=2, field_name=3
+  name_num INTEGER,
+  name_text TEXT,
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
-CREATE TABLE IF NOT EXISTS roots (
+CREATE TABLE IF NOT EXISTS object_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   snapshot_id INTEGER NOT NULL,
-  obj_addr TEXT NOT NULL,
-  root_type TEXT,
+  lang INTEGER NOT NULL,
+  obj_addr INTEGER NOT NULL,
+  field_name TEXT NOT NULL,
+  field_value_int INTEGER,
+  field_value_text TEXT,
+  value_type TEXT,
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
 CREATE TABLE IF NOT EXISTS xrefs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   snapshot_id INTEGER NOT NULL,
-  lang TEXT NOT NULL,
-  ref_addr TEXT NOT NULL,
-  owner_obj_addr TEXT NOT NULL,
-  ref_kind TEXT,
+  lang INTEGER NOT NULL,
+  ref_addr INTEGER NOT NULL,
+  owner_obj_addr INTEGER NOT NULL,
+  ref_kind INTEGER NOT NULL,             -- stable_ref=1, napi_ref=2
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
 CREATE TABLE IF NOT EXISTS cross_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   snapshot_id INTEGER NOT NULL,
-  js_obj_addr TEXT,
-  kt_obj_addr TEXT,
-  ref_addr TEXT NOT NULL,
-  confidence REAL,
-  evidence_json TEXT,
+  js_obj_addr INTEGER,
+  kt_obj_addr INTEGER,
+  ref_addr INTEGER NOT NULL,
+  ref_kind INTEGER NOT NULL,
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
@@ -73,11 +78,17 @@ CREATE TABLE IF NOT EXISTS heap_strings (
 CREATE INDEX IF NOT EXISTS idx_objects_snapshot_addr
 ON objects(snapshot_id, obj_addr);
 
+CREATE INDEX IF NOT EXISTS idx_objects_snapshot_type
+ON objects(snapshot_id, type_name);
+
 CREATE INDEX IF NOT EXISTS idx_edges_snapshot_from
 ON edges(snapshot_id, from_obj_addr);
 
-CREATE INDEX IF NOT EXISTS idx_edges_snapshot_to
-ON edges(snapshot_id, to_obj_addr);
+CREATE INDEX IF NOT EXISTS idx_edges_snapshot_name_lookup
+ON edges(snapshot_id, name_kind, name_num);
+
+CREATE INDEX IF NOT EXISTS idx_object_fields_snapshot_field
+ON object_fields(snapshot_id, field_name);
 
 CREATE INDEX IF NOT EXISTS idx_xrefs_snapshot_ref
 ON xrefs(snapshot_id, ref_addr);
@@ -85,5 +96,5 @@ ON xrefs(snapshot_id, ref_addr);
 CREATE INDEX IF NOT EXISTS idx_cross_links_snapshot_ref
 ON cross_links(snapshot_id, ref_addr);
 
-CREATE INDEX IF NOT EXISTS idx_heap_strings_snapshot_idx
-ON heap_strings(snapshot_id, string_index);
+CREATE INDEX IF NOT EXISTS idx_heap_strings_snapshot_value
+ON heap_strings(snapshot_id, value);

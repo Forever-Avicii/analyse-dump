@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Tuple
+from typing import Iterable, Optional, Tuple
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "schema.sql"
 
@@ -39,12 +39,12 @@ def create_snapshot(
 
 def insert_objects(
     conn: sqlite3.Connection,
-    rows: Iterable[Tuple[int, str, str, str, Optional[int], Optional[int], Optional[str]]],
+    rows: Iterable[Tuple[int, int, int, Optional[str], Optional[int], Optional[int], Optional[int]]],
 ) -> None:
     conn.executemany(
         """
         INSERT INTO objects(
-          snapshot_id, lang, obj_addr, type_name, shallow_size, retained_size, extra_json
+          snapshot_id, lang, obj_addr, type_name, shallow_size, heap_index, name_index
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
@@ -53,12 +53,27 @@ def insert_objects(
 
 def insert_edges(
     conn: sqlite3.Connection,
-    rows: Iterable[Tuple[int, str, str, Optional[str], Optional[str]]],
+    rows: Iterable[Tuple[int, int, int, int, int, Optional[int], Optional[str]]],
 ) -> None:
     conn.executemany(
         """
-        INSERT INTO edges(snapshot_id, from_obj_addr, to_obj_addr, edge_type, field_name_or_index)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO edges(
+          snapshot_id, from_obj_addr, to_obj_addr, edge_type, name_kind, name_num, name_text
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+
+
+def insert_object_fields(
+    conn: sqlite3.Connection,
+    rows: Iterable[Tuple[int, int, int, str, Optional[int], Optional[str], Optional[str]]],
+) -> None:
+    conn.executemany(
+        """
+        INSERT INTO object_fields(
+          snapshot_id, lang, obj_addr, field_name, field_value_int, field_value_text, value_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -85,14 +100,3 @@ def fetch_string(conn: sqlite3.Connection, snapshot_id: int, index: int) -> Opti
     if row is None:
         return None
     return str(row[0])
-
-
-def chunked(iterable: Iterable, size: int):
-    batch = []
-    for item in iterable:
-        batch.append(item)
-        if len(batch) >= size:
-            yield batch
-            batch = []
-    if batch:
-        yield batch

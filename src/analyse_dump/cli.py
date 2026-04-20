@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from analyse_dump import db
@@ -18,6 +19,48 @@ def _format_addr(lang: str, addr: int) -> str:
     if lang == "js":
         return str(int(addr))
     return f"0x{int(addr):x}"
+
+
+def _render_chain_narrative(result: dict) -> str:
+    lines = []
+    verdict = str(result.get("verdict", "inconclusive"))
+    lines.append(f"Analysis verdict: {verdict}.")
+    if "reason" in result:
+        lines.append(f"Reason: {result['reason']}.")
+
+    segments = result.get("segments", [])
+    bridges = result.get("bridges", [])
+    lines.append(f"Segments analyzed: {len(segments)}. Cross-language bridges: {len(bridges)}.")
+
+    for seg in segments:
+        root_result = seg.get("root_result", {})
+        start_lang = str(seg.get("start_lang", "unknown"))
+        start_addr = int(seg.get("start_addr", 0))
+        if root_result.get("found"):
+            root = root_result.get("root")
+            if root is not None:
+                root_lang = "js" if int(root.lang) == 0 else "kotlin"  # type: ignore[attr-defined]
+                root_addr = int(root.addr)  # type: ignore[attr-defined]
+                lines.append(
+                    f"Step {seg.get('step')}: {start_lang}:{_format_addr(start_lang, start_addr)} "
+                    f"reaches root {root_lang}:{_format_addr(root_lang, root_addr)}."
+                )
+        else:
+            lines.append(
+                f"Step {seg.get('step')}: {start_lang}:{_format_addr(start_lang, start_addr)} "
+                f"failed to reach root ({root_result.get('reason', 'unknown')})."
+            )
+
+    for b in bridges:
+        from_lang = str(b.get("from_lang", "unknown"))
+        to_lang = str(b.get("to_lang", "unknown"))
+        lines.append(
+            f"Bridge {b.get('step')}: {from_lang}:{_format_addr(from_lang, int(b.get('from_addr', 0)))} "
+            f"-> {to_lang}:{_format_addr(to_lang, int(b.get('to_addr', 0)))} via "
+            f"{b.get('ref_kind')}@0x{int(b.get('ref_addr', 0)):x} ({b.get('kind')})."
+        )
+
+    return "\n".join(lines)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -127,6 +170,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chain.add_argument("--js-cache-profile", type=str, default=None, help="optional JS cache profile override")
     p_chain.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
     p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
+    p_chain.add_argument("--json", action="store_true", help="output full analyze-chain result as JSON")
+    p_chain.add_argument("--narrative", action="store_true", help="print narrative summary after structured output")
 
     return parser
 
@@ -338,6 +383,13 @@ def main() -> None:
             kt_cache_profile=args.kt_cache_profile,
             max_branch_candidates=args.max_branch_candidates,
         )
+        if args.json:
+            print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+            if args.narrative:
+                print("---")
+                print(_render_chain_narrative(result))
+            return
+
         print(f"verdict={result['verdict']}")
         if "reason" in result:
             print(f"reason={result['reason']}")

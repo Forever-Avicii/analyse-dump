@@ -126,6 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_chain.add_argument("--js-cache-profile", type=str, default=None, help="optional JS cache profile override")
     p_chain.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
+    p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
 
     return parser
 
@@ -335,6 +336,7 @@ def main() -> None:
             js_deprioritize_keywords_csv=args.js_deprioritize_keywords,
             js_cache_profile=args.js_cache_profile,
             kt_cache_profile=args.kt_cache_profile,
+            max_branch_candidates=args.max_branch_candidates,
         )
         print(f"verdict={result['verdict']}")
         if "reason" in result:

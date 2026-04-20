@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Set
 
 from analyse_dump import db
 from analyse_dump.const import (
@@ -10,7 +10,6 @@ from analyse_dump.const import (
     EDGE_ELEMENT,
     EDGE_HIDDEN,
     EDGE_PROPERTY,
-    EDGE_WEAK,
     LANG_JS,
     LANG_KOTLIN,
     NAME_KIND_STRING_INDEX,
@@ -29,15 +28,19 @@ LANG_NAME = {
     LANG_KOTLIN: "kotlin",
 }
 
-REF_KIND_NAME = {
-    REF_KIND_STABLE_REF: "stable_ref",
-}
-
 
 @dataclass(frozen=True)
 class SimpleNode:
     lang: int
     addr: int
+
+
+@dataclass
+class _SearchState:
+    current: SimpleNode
+    visited: Set[SimpleNode]
+    segments: List[Dict[str, object]]
+    bridges: List[Dict[str, object]]
 
 
 def _parse_addr(addr: str) -> int:
@@ -71,30 +74,6 @@ def _segment_anchor(result: Dict[str, object]) -> Optional[SimpleNode]:
     return SimpleNode(int(root.lang), int(root.addr))  # type: ignore[attr-defined]
 
 
-def _segment_nodes(result: Dict[str, object]) -> List[SimpleNode]:
-    path = result.get("path", [])
-    if not isinstance(path, list) or not path:
-        root = result.get("root")
-        if root is None:
-            return []
-        return [SimpleNode(int(root.lang), int(root.addr))]  # type: ignore[attr-defined]
-
-    out: List[SimpleNode] = []
-    first_held = path[0][1]
-    out.append(SimpleNode(int(first_held.lang), int(first_held.addr)))  # type: ignore[attr-defined]
-    for holder, _held, _detail in path:
-        out.append(SimpleNode(int(holder.lang), int(holder.addr)))  # type: ignore[attr-defined]
-
-    deduped: List[SimpleNode] = []
-    seen: Set[SimpleNode] = set()
-    for n in out:
-        if n in seen:
-            continue
-        seen.add(n)
-        deduped.append(n)
-    return deduped
-
-
 def _parse_num(s: str) -> Optional[int]:
     text = s.strip().lower()
     if not text:
@@ -121,7 +100,7 @@ def _js_array_ref_values(
     def _scan_array_node(array_addr: int) -> None:
         rows = conn.execute(
             """
-            SELECT e.to_obj_addr, o.name_index, hs.value
+            SELECT e.to_obj_addr, hs.value
             FROM edges e
             LEFT JOIN objects o
               ON o.snapshot_id = e.snapshot_id
@@ -137,7 +116,7 @@ def _js_array_ref_values(
             """,
             (LANG_JS, js_snapshot_id, array_addr, EDGE_ELEMENT, EDGE_HIDDEN, EDGE_ARRAY_ELEMENT, max_elems),
         ).fetchall()
-        for elem_addr, _name_index, name_value in rows:
+        for elem_addr, name_value in rows:
             a = int(elem_addr)
             if a in seen:
                 continue
@@ -149,7 +128,7 @@ def _js_array_ref_values(
                 out.append(n)
 
     _scan_array_node(container_addr)
-    # Some runtimes store JSArray elements in backing "(object elements)".
+
     row = conn.execute(
         """
         SELECT e.to_obj_addr
@@ -171,60 +150,16 @@ def _js_array_ref_values(
     return out
 
 
-def _js_node_meta(
-    conn,
-    js_snapshot_id: int,
-    addr: int,
-) -> Dict[str, Optional[str]]:
-    row = conn.execute(
-        """
-        SELECT o.type_name, hs.value
-        FROM objects o
-        LEFT JOIN heap_strings hs
-          ON hs.snapshot_id = o.snapshot_id
-         AND hs.string_index = o.name_index
-        WHERE o.snapshot_id = ?
-          AND o.lang = ?
-          AND o.obj_addr = ?
-        LIMIT 1
-        """,
-        (js_snapshot_id, LANG_JS, addr),
-    ).fetchone()
-    if row is None:
-        return {"type_name": None, "name": None}
-    return {
-        "type_name": (str(row[0]) if row[0] is not None else None),
-        "name": (str(row[1]) if row[1] is not None else None),
-    }
-
-
-def _is_deprioritized_js_node(
-    conn,
-    js_snapshot_id: int,
-    node: SimpleNode,
-    deprioritize_keywords: Sequence[str],
-) -> bool:
-    meta = _js_node_meta(conn, js_snapshot_id, node.addr)
-    tname = (meta["type_name"] or "").lower()
-    oname = (meta["name"] or "").lower()
-    for kw in deprioritize_keywords:
-        k = kw.strip().lower()
-        if not k:
-            continue
-        if k in tname or k in oname:
-            return True
-    return False
-
-
-def _bridge_from_js_anchor(
+def _bridge_candidates_from_js_anchor(
     conn,
     js_snapshot_id: int,
     kt_snapshot_id: int,
     anchor: SimpleNode,
     visited: Set[SimpleNode],
-    js_napi_prop: str = "knapi_refs_test",
-    kt_napi_field: str = "ref",
-) -> Optional[Dict[str, object]]:
+    js_napi_prop: str,
+    kt_napi_field: str,
+    max_candidates: int,
+) -> List[Dict[str, object]]:
     prop_rows = conn.execute(
         """
         SELECT e.to_obj_addr
@@ -242,15 +177,16 @@ def _bridge_from_js_anchor(
         (js_snapshot_id, anchor.addr, EDGE_PROPERTY, NAME_KIND_STRING_INDEX, js_napi_prop),
     ).fetchall()
     if not prop_rows:
-        return None
+        return []
 
     ref_values: List[int] = []
     for (container_addr,) in prop_rows:
         ref_values.extend(_js_array_ref_values(conn, js_snapshot_id, int(container_addr)))
     ref_values = sorted(set(ref_values))
     if not ref_values:
-        return None
+        return []
 
+    out: List[Dict[str, object]] = []
     for ref_value in ref_values:
         holder_rows = conn.execute(
             """
@@ -265,29 +201,32 @@ def _bridge_from_js_anchor(
             """,
             (kt_snapshot_id, LANG_KOTLIN, kt_napi_field, ref_value),
         ).fetchall()
-        if not holder_rows:
-            continue
         for (kt_addr,) in holder_rows:
             target = SimpleNode(LANG_KOTLIN, int(kt_addr))
             kind = "loop" if target in visited else "jump"
-            return {
-                "kind": kind,
-                "from": anchor,
-                "to": target,
-                "ref_kind": "napi_ref",
-                "ref_addr": ref_value,
-                "evidence": f"js_prop={js_napi_prop}",
-            }
-    return None
+            out.append(
+                {
+                    "kind": kind,
+                    "from": anchor,
+                    "to": target,
+                    "ref_kind": "napi_ref",
+                    "ref_addr": int(ref_value),
+                    "evidence": f"js_prop={js_napi_prop}",
+                }
+            )
+            if len(out) >= max_candidates:
+                return out
+    return out
 
 
-def _bridge_from_kt_root(
+def _bridge_candidates_from_kt_root(
     conn,
     js_snapshot_id: int,
     kt_snapshot_id: int,
     root: SimpleNode,
     visited: Set[SimpleNode],
-) -> Optional[Dict[str, object]]:
+    max_candidates: int,
+) -> List[Dict[str, object]]:
     ref_rows = conn.execute(
         """
         SELECT DISTINCT ref_addr
@@ -302,8 +241,9 @@ def _bridge_from_kt_root(
         (kt_snapshot_id, LANG_KOTLIN, root.addr, REF_KIND_STABLE_REF),
     ).fetchall()
     if not ref_rows:
-        return None
+        return []
 
+    out: List[Dict[str, object]] = []
     for (ref_addr_raw,) in ref_rows:
         ref_addr = int(ref_addr_raw)
         js_rows = conn.execute(
@@ -322,15 +262,19 @@ def _bridge_from_kt_root(
         for (js_addr_raw,) in js_rows:
             target = SimpleNode(LANG_JS, int(js_addr_raw))
             kind = "loop" if target in visited else "jump"
-            return {
-                "kind": kind,
-                "from": root,
-                "to": target,
-                "ref_kind": "stable_ref",
-                "ref_addr": ref_addr,
-                "evidence": "kt_root_stable_ref",
-            }
-    return None
+            out.append(
+                {
+                    "kind": kind,
+                    "from": root,
+                    "to": target,
+                    "ref_kind": "stable_ref",
+                    "ref_addr": ref_addr,
+                    "evidence": "kt_root_stable_ref",
+                }
+            )
+            if len(out) >= max_candidates:
+                return out
+    return out
 
 
 def analyze_chain(
@@ -350,12 +294,15 @@ def analyze_chain(
     js_deprioritize_keywords_csv: str = "global,synthetic,handle,native",
     js_cache_profile: Optional[str] = None,
     kt_cache_profile: Optional[str] = None,
+    max_branch_candidates: int = 4,
 ) -> Dict[str, object]:
+    del js_deprioritize_keywords_csv  # reserved for future ranking policies
+
     lang_norm = lang.strip().lower()
     if lang_norm not in LANG_BY_NAME:
         raise ValueError("--lang must be js or kotlin")
 
-    current = SimpleNode(LANG_BY_NAME[lang_norm], _parse_addr(addr))
+    start = SimpleNode(LANG_BY_NAME[lang_norm], _parse_addr(addr))
 
     conn = db.connect(db_path)
     try:
@@ -364,138 +311,189 @@ def analyze_chain(
         if kt_snapshot_id is None:
             kt_snapshot_id = _fetch_latest_snapshot_id(conn, "hprof")
 
-        visited: Set[SimpleNode] = {current}
-        segments: List[Dict[str, object]] = []
-        bridges: List[Dict[str, object]] = []
+        frontier: List[_SearchState] = [
+            _SearchState(current=start, visited={start}, segments=[], bridges=[])
+        ]
+        terminals: List[Dict[str, object]] = []
+
         for step in range(1, max_steps + 1):
-            # By default, JS root detection is too heuristic. For chain orchestration,
-            # prefer walking to pseudo roots (0/1) unless caller overrides root types.
-            js_root_types_for_step = js_root_types_csv
-            if current.lang == LANG_JS and js_root_types_for_step is None:
-                js_root_types_for_step = "__never_match__"
-            if current.lang == LANG_JS:
-                cache_profile = make_cache_profile(
-                    lang="js",
-                    include_weak=include_weak,
-                    root_types_csv=js_root_types_for_step,
-                    profile_override=js_cache_profile,
-                )
-            else:
-                cache_profile = make_cache_profile(
-                    lang="kotlin",
-                    include_weak=include_weak,
-                    root_types_csv=kt_root_types_csv,
-                    profile_override=kt_cache_profile,
-                )
+            next_frontier: List[_SearchState] = []
 
-            seg = find_root_path(
-                db_path=db_path,
-                addr=f"0x{current.addr:x}",
-                lang=LANG_NAME[current.lang],
-                js_snapshot_id=int(js_snapshot_id),
-                kt_snapshot_id=int(kt_snapshot_id),
-                max_depth=max_depth,
-                max_fanout=max_fanout,
-                include_weak=include_weak,
-                js_root_types_csv=js_root_types_for_step,
-                kt_root_types_csv=kt_root_types_csv,
-                use_cache=True,
-                cache_profile=cache_profile,
-            )
-            segments.append(
-                {
-                    "step": step,
-                    "start_lang": LANG_NAME[current.lang],
-                    "start_addr": current.addr,
-                    "root_result": seg,
-                }
-            )
+            for state in frontier:
+                current = state.current
+                visited = set(state.visited)
+                segments = list(state.segments)
+                bridges = list(state.bridges)
 
-            if not seg.get("found"):
-                return {
-                    "verdict": "inconclusive",
-                    "reason": str(seg.get("reason", "root_path_not_found")),
-                    "segments": segments,
-                    "bridges": bridges,
-                }
+                js_root_types_for_step = js_root_types_csv
+                if current.lang == LANG_JS and js_root_types_for_step is None:
+                    js_root_types_for_step = "__never_match__"
 
-            root = seg.get("root")
-            if root is None:
-                return {
-                    "verdict": "inconclusive",
-                    "reason": "segment_missing_root",
-                    "segments": segments,
-                    "bridges": bridges,
-                }
-            root_node = SimpleNode(int(root.lang), int(root.addr))  # type: ignore[attr-defined]
-            anchor_node = _segment_anchor(seg)
-            if anchor_node is None:
-                return {
-                    "verdict": "inconclusive",
-                    "reason": "segment_missing_anchor",
-                    "segments": segments,
-                    "bridges": bridges,
-                }
+                if current.lang == LANG_JS:
+                    cache_profile = make_cache_profile(
+                        lang="js",
+                        include_weak=include_weak,
+                        root_types_csv=js_root_types_for_step,
+                        profile_override=js_cache_profile,
+                    )
+                else:
+                    cache_profile = make_cache_profile(
+                        lang="kotlin",
+                        include_weak=include_weak,
+                        root_types_csv=kt_root_types_csv,
+                        profile_override=kt_cache_profile,
+                    )
 
-            if current.lang == LANG_JS:
-                bridge = _bridge_from_js_anchor(
-                    conn,
+                seg = find_root_path(
+                    db_path=db_path,
+                    addr=f"0x{current.addr:x}",
+                    lang=LANG_NAME[current.lang],
                     js_snapshot_id=int(js_snapshot_id),
                     kt_snapshot_id=int(kt_snapshot_id),
-                    anchor=anchor_node,
-                    visited=visited,
-                    js_napi_prop=js_napi_prop,
-                    kt_napi_field=kt_napi_field,
+                    max_depth=max_depth,
+                    max_fanout=max_fanout,
+                    include_weak=include_weak,
+                    js_root_types_csv=js_root_types_for_step,
+                    kt_root_types_csv=kt_root_types_csv,
+                    use_cache=True,
+                    cache_profile=cache_profile,
                 )
-            else:
-                bridge = _bridge_from_kt_root(
-                    conn,
-                    js_snapshot_id=int(js_snapshot_id),
-                    kt_snapshot_id=int(kt_snapshot_id),
-                    root=root_node,
-                    visited=visited,
+                segments.append(
+                    {
+                        "step": step,
+                        "start_lang": LANG_NAME[current.lang],
+                        "start_addr": current.addr,
+                        "root_result": seg,
+                    }
                 )
-            if bridge is None:
-                return {
-                    "verdict": "reached_terminal_root",
-                    "segments": segments,
-                    "bridges": bridges,
-                }
 
-            from_node = bridge["from"]
-            to_node = bridge["to"]
-            ref_addr = int(bridge["ref_addr"])
-            bridges.append(
-                {
-                    "step": step,
-                    "kind": bridge["kind"],
-                    "from_lang": LANG_NAME[from_node.lang],
-                    "from_addr": from_node.addr,
-                    "to_lang": LANG_NAME[to_node.lang],
-                    "to_addr": to_node.addr,
-                    "ref_kind": str(bridge["ref_kind"]),
-                    "ref_addr": ref_addr,
-                    "evidence": str(bridge.get("evidence", "")),
-                    "anchor_lang": LANG_NAME[anchor_node.lang],
-                    "anchor_addr": anchor_node.addr,
-                }
-            )
+                if not seg.get("found"):
+                    terminals.append(
+                        {
+                            "verdict": "inconclusive",
+                            "reason": str(seg.get("reason", "root_path_not_found")),
+                            "segments": segments,
+                            "bridges": bridges,
+                        }
+                    )
+                    continue
 
-            if bridge["kind"] == "loop":
-                return {
-                    "verdict": "loop_detected",
-                    "segments": segments,
-                    "bridges": bridges,
-                }
+                root = seg.get("root")
+                if root is None:
+                    terminals.append(
+                        {
+                            "verdict": "inconclusive",
+                            "reason": "segment_missing_root",
+                            "segments": segments,
+                            "bridges": bridges,
+                        }
+                    )
+                    continue
+                root_node = SimpleNode(int(root.lang), int(root.addr))  # type: ignore[attr-defined]
+                anchor_node = _segment_anchor(seg)
+                if anchor_node is None:
+                    terminals.append(
+                        {
+                            "verdict": "inconclusive",
+                            "reason": "segment_missing_anchor",
+                            "segments": segments,
+                            "bridges": bridges,
+                        }
+                    )
+                    continue
 
-            current = to_node
-            visited.add(current)
+                if current.lang == LANG_JS:
+                    candidates = _bridge_candidates_from_js_anchor(
+                        conn=conn,
+                        js_snapshot_id=int(js_snapshot_id),
+                        kt_snapshot_id=int(kt_snapshot_id),
+                        anchor=anchor_node,
+                        visited=visited,
+                        js_napi_prop=js_napi_prop,
+                        kt_napi_field=kt_napi_field,
+                        max_candidates=max(1, max_branch_candidates),
+                    )
+                else:
+                    candidates = _bridge_candidates_from_kt_root(
+                        conn=conn,
+                        js_snapshot_id=int(js_snapshot_id),
+                        kt_snapshot_id=int(kt_snapshot_id),
+                        root=root_node,
+                        visited=visited,
+                        max_candidates=max(1, max_branch_candidates),
+                    )
 
+                if not candidates:
+                    terminals.append(
+                        {
+                            "verdict": "reached_terminal_root",
+                            "segments": segments,
+                            "bridges": bridges,
+                        }
+                    )
+                    continue
+
+                loop_candidates = [c for c in candidates if str(c.get("kind")) == "loop"]
+                ordered = loop_candidates + [c for c in candidates if str(c.get("kind")) != "loop"]
+
+                for cand in ordered[: max(1, max_branch_candidates)]:
+                    from_node = cand["from"]
+                    to_node = cand["to"]
+                    next_bridges = list(bridges)
+                    next_bridges.append(
+                        {
+                            "step": step,
+                            "kind": cand["kind"],
+                            "from_lang": LANG_NAME[from_node.lang],
+                            "from_addr": from_node.addr,
+                            "to_lang": LANG_NAME[to_node.lang],
+                            "to_addr": to_node.addr,
+                            "ref_kind": str(cand["ref_kind"]),
+                            "ref_addr": int(cand["ref_addr"]),
+                            "evidence": str(cand.get("evidence", "")),
+                            "anchor_lang": LANG_NAME[anchor_node.lang],
+                            "anchor_addr": anchor_node.addr,
+                            "candidate_count": len(candidates),
+                        }
+                    )
+
+                    if cand["kind"] == "loop":
+                        return {
+                            "verdict": "loop_detected",
+                            "segments": segments,
+                            "bridges": next_bridges,
+                        }
+
+                    next_visited = set(visited)
+                    next_visited.add(to_node)
+                    next_frontier.append(
+                        _SearchState(
+                            current=to_node,
+                            visited=next_visited,
+                            segments=segments,
+                            bridges=next_bridges,
+                        )
+                    )
+
+            if not next_frontier:
+                break
+            frontier = next_frontier[: max(1, max_branch_candidates)]
+
+        if terminals:
+            return terminals[0]
+        if frontier:
+            return {
+                "verdict": "inconclusive",
+                "reason": "max_steps_reached",
+                "segments": frontier[0].segments,
+                "bridges": frontier[0].bridges,
+            }
         return {
             "verdict": "inconclusive",
             "reason": "max_steps_reached",
-            "segments": segments,
-            "bridges": bridges,
+            "segments": [],
+            "bridges": [],
         }
     finally:
         conn.close()
+

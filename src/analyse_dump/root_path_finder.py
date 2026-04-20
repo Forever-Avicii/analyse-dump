@@ -213,6 +213,20 @@ def _is_root(
     js_root_types: Set[str],
     kt_root_types: Set[str],
 ) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM roots
+        WHERE snapshot_id = ?
+          AND lang = ?
+          AND obj_addr = ?
+        LIMIT 1
+        """,
+        (snapshot_id, node.lang, node.addr),
+    ).fetchone()
+    if row is not None:
+        return True
+
     # In ArkTS snapshots, pseudo root entry nodes commonly appear as addr 0/1.
     # Treat them as root anchors to align with "distance to GC root" semantics.
     if node.lang == LANG_JS and node.addr in DEFAULT_JS_PSEUDO_ROOT_ADDRS:

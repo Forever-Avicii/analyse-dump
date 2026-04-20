@@ -8,3 +8,4 @@ out/
 *.db
 .deps/
 *.egg-info/
+setup.py

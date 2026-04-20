@@ -17,7 +17,57 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    _migrate_legacy_roots_table(conn)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def _migrate_legacy_roots_table(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='roots'"
+    ).fetchone()
+    if row is None:
+        return
+
+    cols = conn.execute("PRAGMA table_info(roots)").fetchall()
+    col_names = {str(c[1]) for c in cols}
+    if "lang" in col_names and "root_kind" in col_names and "source" in col_names:
+        return
+
+    conn.execute("ALTER TABLE roots RENAME TO roots_legacy")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          snapshot_id INTEGER NOT NULL,
+          lang INTEGER NOT NULL,
+          obj_addr INTEGER NOT NULL,
+          root_kind TEXT,
+          source TEXT,
+          FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source)
+        SELECT rl.snapshot_id,
+               CASE
+                 WHEN s.type = 'heapsnapshot' THEN 0
+                 WHEN s.type = 'hprof' THEN 1
+                 ELSE -1
+               END AS lang,
+               rl.obj_addr,
+               rl.root_type,
+               'legacy_migrated'
+        FROM roots_legacy rl
+        LEFT JOIN snapshots s
+          ON s.id = rl.snapshot_id
+        """
+    )
+    conn.execute("DROP TABLE roots_legacy")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_roots_snapshot_lang_addr ON roots(snapshot_id, lang, obj_addr)"
+    )
 
 
 def create_snapshot(
@@ -87,6 +137,19 @@ def insert_strings(
         """
         INSERT INTO heap_strings(snapshot_id, string_index, value)
         VALUES (?, ?, ?)
+        """,
+        rows,
+    )
+
+
+def insert_roots(
+    conn: sqlite3.Connection,
+    rows: Iterable[Tuple[int, int, int, Optional[str], Optional[str]]],
+) -> None:
+    conn.executemany(
+        """
+        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source)
+        VALUES (?, ?, ?, ?, ?)
         """,
         rows,
     )

@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS cross_links (
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
+CREATE TABLE IF NOT EXISTS roots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id INTEGER NOT NULL,
+  lang INTEGER NOT NULL,
+  obj_addr INTEGER NOT NULL,
+  root_kind TEXT,
+  source TEXT,
+  FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+);
+
 CREATE TABLE IF NOT EXISTS root_distance (
   snapshot_id INTEGER NOT NULL,
   lang INTEGER NOT NULL,
@@ -119,6 +129,9 @@ ON xrefs(snapshot_id, ref_addr);
 
 CREATE INDEX IF NOT EXISTS idx_cross_links_snapshot_ref
 ON cross_links(snapshot_id, ref_addr);
+
+CREATE INDEX IF NOT EXISTS idx_roots_snapshot_lang_addr
+ON roots(snapshot_id, lang, obj_addr);
 
 CREATE INDEX IF NOT EXISTS idx_root_distance_snapshot_lang_dist
 ON root_distance(snapshot_id, lang, dist);

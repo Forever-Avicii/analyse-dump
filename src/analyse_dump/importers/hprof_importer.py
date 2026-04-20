@@ -281,6 +281,25 @@ def import_hprof(db_path: Path, hprof_path: Path, batch_size: int = 5000) -> int
         if field_rows:
             db.insert_object_fields(conn, field_rows)
 
+        root_rows = conn.execute(
+            """
+            SELECT DISTINCT obj_addr, type_name
+            FROM objects
+            WHERE snapshot_id = ?
+              AND lang = ?
+              AND type_name LIKE ?
+            """,
+            (snapshot_id, LANG_KOTLIN, "%kotlin.native.internal.StableRef%"),
+        ).fetchall()
+        if root_rows:
+            db.insert_roots(
+                conn,
+                [
+                    (snapshot_id, LANG_KOTLIN, int(obj_addr), str(type_name), "hprof_type")
+                    for obj_addr, type_name in root_rows
+                ],
+            )
+
         conn.commit()
     finally:
         try:

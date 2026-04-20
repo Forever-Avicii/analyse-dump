@@ -192,6 +192,38 @@ def import_heapsnapshot(
     if edge_batch:
         db.insert_edges(conn, edge_batch)
 
+    # Persist root seeds extracted from snapshot-level semantics.
+    root_rows: List[Tuple[int, int, int, Optional[str], Optional[str]]] = []
+    js_root_types = ("synthetic", "native", "handle")
+    type_rows = conn.execute(
+        """
+        SELECT DISTINCT obj_addr, type_name
+        FROM objects
+        WHERE snapshot_id = ?
+          AND lang = ?
+          AND type_name IN (?, ?, ?)
+        """,
+        (snapshot_id, LANG_JS, js_root_types[0], js_root_types[1], js_root_types[2]),
+    ).fetchall()
+    for obj_addr, type_name in type_rows:
+        root_rows.append((snapshot_id, LANG_JS, int(obj_addr), str(type_name), "heapsnapshot_type"))
+
+    pseudo_rows = conn.execute(
+        """
+        SELECT DISTINCT obj_addr
+        FROM objects
+        WHERE snapshot_id = ?
+          AND lang = ?
+          AND obj_addr IN (0, 1)
+        """,
+        (snapshot_id, LANG_JS),
+    ).fetchall()
+    for (obj_addr,) in pseudo_rows:
+        root_rows.append((snapshot_id, LANG_JS, int(obj_addr), "pseudo_root", "heapsnapshot_pseudo"))
+
+    if root_rows:
+        db.insert_roots(conn, root_rows)
+
     conn.commit()
     conn.close()
     return snapshot_id

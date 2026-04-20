@@ -11,6 +11,7 @@ from analyse_dump.importers.hprof_importer import import_hprof
 from analyse_dump.linker import link_with_config
 from analyse_dump.root_distance import build_root_distance, make_cache_profile
 from analyse_dump.root_path_finder import find_root_path
+from analyse_dump.roots_builder import build_roots
 
 
 def _format_addr(lang: str, addr: int) -> str:
@@ -49,6 +50,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_link.add_argument("--config", required=True, type=Path, help="JSON config path")
     p_link.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
     p_link.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
+
+    p_roots = sub.add_parser("build-roots", help="materialize roots table from current snapshot semantics")
+    p_roots.add_argument("--db", required=True, type=Path, help="SQLite db path")
+    p_roots.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
+    p_roots.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
 
     p_dist = sub.add_parser("build-root-distance", help="precompute distance-to-root cache by language")
     p_dist.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -166,6 +172,18 @@ def main() -> None:
                 f"rule={item['rule']} ref_kind={item['ref_kind']} "
                 f"js_xrefs={item['js_xrefs']} kt_xrefs={item['kt_xrefs']} cross_links={item['cross_links']}"
             )
+        return
+
+    if args.command == "build-roots":
+        result = build_roots(
+            db_path=args.db,
+            js_snapshot_id=args.js_snapshot_id,
+            kt_snapshot_id=args.kt_snapshot_id,
+        )
+        print(
+            f"built=true js_snapshot_id={result['js_snapshot_id']} js_roots={result['js_roots']} "
+            f"kt_snapshot_id={result['kt_snapshot_id']} kt_roots={result['kt_roots']}"
+        )
         return
 
     if args.command == "build-root-distance":

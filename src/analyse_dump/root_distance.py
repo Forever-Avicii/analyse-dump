@@ -62,6 +62,24 @@ def _load_roots(
     js_root_types_csv: Optional[str],
     kt_root_types_csv: Optional[str],
 ) -> List[int]:
+    # If caller explicitly passed root-types override, honor it and bypass roots table.
+    has_explicit_override = (
+        (lang_code == LANG_JS and js_root_types_csv is not None)
+        or (lang_code == LANG_KOTLIN and kt_root_types_csv is not None)
+    )
+    if not has_explicit_override:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT obj_addr
+            FROM roots
+            WHERE snapshot_id = ?
+              AND lang = ?
+            """,
+            (snapshot_id, lang_code),
+        ).fetchall()
+        if rows:
+            return sorted({int(r[0]) for r in rows})
+
     if lang_code == LANG_JS:
         root_types = _split_csv(js_root_types_csv) or set(DEFAULT_JS_ROOT_TYPES)
         rows = conn.execute(

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from analyse_dump import db
+from analyse_dump.agent_analyzer import run_agent_analysis
 from analyse_dump.chain_analyzer import analyze_chain
 from analyse_dump.bridge_queries import inspect_js_props, search_kt_by_value
 from analyse_dump.importers.heapsnapshot_importer import import_heapsnapshot
@@ -172,6 +173,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
     p_chain.add_argument("--json", action="store_true", help="output full analyze-chain result as JSON")
     p_chain.add_argument("--narrative", action="store_true", help="print narrative summary after structured output")
+
+    p_agent = sub.add_parser("analyze-chain-agent", help="agent-style diagnosis on top of analyze-chain output")
+    p_agent.add_argument("--db", required=True, type=Path, help="SQLite db path")
+    p_agent.add_argument("--addr", required=True, type=str, help="start object address/id (hex/dec)")
+    p_agent.add_argument("--lang", required=True, type=str, help="start language: js or kotlin")
+    p_agent.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
+    p_agent.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
+    p_agent.add_argument("--max-steps", type=int, default=8, help="max cross-language hops")
+    p_agent.add_argument("--max-depth", type=int, default=16, help="max reverse depth per language segment")
+    p_agent.add_argument("--max-fanout", type=int, default=512, help="max incoming edges expanded per node")
+    p_agent.add_argument("--include-weak", action="store_true", help="include weak edges in root-path search")
+    p_agent.add_argument("--js-root-types", type=str, default=None, help="comma-separated JS root type names")
+    p_agent.add_argument("--kt-root-types", type=str, default=None, help="comma-separated Kotlin root type names")
+    p_agent.add_argument("--js-napi-prop", type=str, default="knapi_refs_test", help="JS napi ref property name")
+    p_agent.add_argument("--kt-napi-field", type=str, default="ref", help="Kotlin napi ref field name")
+    p_agent.add_argument("--js-cache-profile", type=str, default=None, help="optional JS cache profile override")
+    p_agent.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
+    p_agent.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
+    p_agent.add_argument("--json", action="store_true", help="output agent analysis as JSON")
 
     return parser
 
@@ -422,6 +442,45 @@ def main() -> None:
                 f"anchor={anchor_lang}:{_format_addr(anchor_lang, int(b.get('anchor_addr', b['from_addr'])))} "
                 f"evidence={b.get('evidence', '-')}"
             )
+        return
+
+    if args.command == "analyze-chain-agent":
+        result = run_agent_analysis(
+            db_path=args.db,
+            addr=args.addr,
+            lang=args.lang,
+            js_snapshot_id=args.js_snapshot_id,
+            kt_snapshot_id=args.kt_snapshot_id,
+            max_steps=args.max_steps,
+            max_depth=args.max_depth,
+            max_fanout=args.max_fanout,
+            include_weak=args.include_weak,
+            js_root_types_csv=args.js_root_types,
+            kt_root_types_csv=args.kt_root_types,
+            js_napi_prop=args.js_napi_prop,
+            kt_napi_field=args.kt_napi_field,
+            js_cache_profile=args.js_cache_profile,
+            kt_cache_profile=args.kt_cache_profile,
+            max_branch_candidates=args.max_branch_candidates,
+        )
+        if args.json:
+            print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+            return
+
+        print(f"summary={result['summary']}")
+        print(f"confidence={result['confidence']}")
+        suspects = result.get("suspects", [])
+        print(f"suspects={len(suspects)}")
+        for i, s in enumerate(suspects, start=1):
+            s_lang = str(s.get("lang", "unknown"))
+            s_addr = int(s.get("addr", 0))
+            print(
+                f"{i}. {s_lang}:{_format_addr(s_lang, s_addr)} "
+                f"type={s.get('type_name')} name={s.get('name')} reason={s.get('reason')}"
+            )
+        print("next_actions:")
+        for i, action in enumerate(result.get("next_actions", []), start=1):
+            print(f"{i}. {action}")
         return
 
     parser.error("Unknown command")

@@ -67,6 +67,27 @@ CREATE TABLE IF NOT EXISTS cross_links (
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 
+CREATE TABLE IF NOT EXISTS root_distance (
+  snapshot_id INTEGER NOT NULL,
+  lang INTEGER NOT NULL,
+  obj_addr INTEGER NOT NULL,
+  dist INTEGER NOT NULL,
+  parent_addr INTEGER,
+  PRIMARY KEY(snapshot_id, lang, obj_addr),
+  FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+);
+
+CREATE TABLE IF NOT EXISTS root_distance_cache (
+  snapshot_id INTEGER NOT NULL,
+  lang INTEGER NOT NULL,
+  profile TEXT NOT NULL,
+  obj_addr INTEGER NOT NULL,
+  dist INTEGER NOT NULL,
+  parent_addr INTEGER,
+  PRIMARY KEY(snapshot_id, lang, profile, obj_addr),
+  FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+);
+
 CREATE TABLE IF NOT EXISTS heap_strings (
   snapshot_id INTEGER NOT NULL,
   string_index INTEGER NOT NULL,
@@ -90,11 +111,20 @@ ON edges(snapshot_id, name_kind, name_num);
 CREATE INDEX IF NOT EXISTS idx_object_fields_snapshot_field
 ON object_fields(snapshot_id, field_name);
 
+CREATE INDEX IF NOT EXISTS idx_object_fields_kt_ref_int
+ON object_fields(snapshot_id, lang, field_name, field_value_int);
+
 CREATE INDEX IF NOT EXISTS idx_xrefs_snapshot_ref
 ON xrefs(snapshot_id, ref_addr);
 
 CREATE INDEX IF NOT EXISTS idx_cross_links_snapshot_ref
 ON cross_links(snapshot_id, ref_addr);
+
+CREATE INDEX IF NOT EXISTS idx_root_distance_snapshot_lang_dist
+ON root_distance(snapshot_id, lang, dist);
+
+CREATE INDEX IF NOT EXISTS idx_root_distance_cache_lookup
+ON root_distance_cache(snapshot_id, lang, profile, dist);
 
 CREATE INDEX IF NOT EXISTS idx_heap_strings_snapshot_value
 ON heap_strings(snapshot_id, value);

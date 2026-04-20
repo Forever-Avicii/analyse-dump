@@ -99,6 +99,26 @@ def _node_type(conn, snapshot_id: int, node: Node) -> Optional[str]:
     return str(row[0])
 
 
+def _node_name(conn, snapshot_id: int, node: Node) -> Optional[str]:
+    row = conn.execute(
+        """
+        SELECT hs.value
+        FROM objects o
+        LEFT JOIN heap_strings hs
+          ON hs.snapshot_id = o.snapshot_id
+         AND hs.string_index = o.name_index
+        WHERE o.snapshot_id = ?
+          AND o.lang = ?
+          AND o.obj_addr = ?
+        LIMIT 1
+        """,
+        (snapshot_id, node.lang, node.addr),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return str(row[0])
+
+
 def _node_exists(conn, snapshot_id: int, node: Node) -> bool:
     row = conn.execute(
         """
@@ -206,6 +226,22 @@ def _is_root(
     return tname in kt_root_types
 
 
+def _split_keywords_csv(values: Optional[str]) -> List[str]:
+    if values is None:
+        return []
+    return [v.strip().lower() for v in values.split(",") if v.strip()]
+
+
+def _keyword_match(s: Optional[str], keywords: Sequence[str]) -> bool:
+    if not s:
+        return False
+    x = s.lower()
+    for k in keywords:
+        if k and k in x:
+            return True
+    return False
+
+
 def _reconstruct_path(
     end_node: Node,
     parent: Dict[Node, Tuple[Node, str]],
@@ -221,6 +257,85 @@ def _reconstruct_path(
     return chain
 
 
+def _cached_path_from_root_distance(
+    conn,
+    snapshot_id: int,
+    start: Node,
+    cache_profile: str,
+) -> Optional[List[Tuple[Node, Node, str]]]:
+    row = conn.execute(
+        """
+        SELECT dist, parent_addr
+        FROM root_distance_cache
+        WHERE snapshot_id = ?
+          AND lang = ?
+          AND profile = ?
+          AND obj_addr = ?
+        LIMIT 1
+        """,
+        (snapshot_id, start.lang, cache_profile, start.addr),
+    ).fetchone()
+    if row is None:
+        return None
+
+    dist = int(row[0])
+    if dist == 0:
+        return []
+
+    chain: List[Tuple[Node, Node, str]] = []
+    cur = start
+    seen: Set[int] = {cur.addr}
+
+    for _ in range(dist):
+        prow = conn.execute(
+            """
+            SELECT parent_addr
+            FROM root_distance_cache
+            WHERE snapshot_id = ?
+              AND lang = ?
+              AND profile = ?
+              AND obj_addr = ?
+            LIMIT 1
+            """,
+            (snapshot_id, start.lang, cache_profile, cur.addr),
+        ).fetchone()
+        if prow is None or prow[0] is None:
+            return None
+        parent_addr = int(prow[0])
+        if parent_addr in seen:
+            return None
+        seen.add(parent_addr)
+
+        edge = conn.execute(
+            """
+            SELECT edge_type, name_kind, name_num, name_text
+            FROM edges
+            WHERE snapshot_id = ?
+              AND from_obj_addr = ?
+              AND to_obj_addr = ?
+            LIMIT 1
+            """,
+            (snapshot_id, parent_addr, cur.addr),
+        ).fetchone()
+        if edge is None:
+            detail = "cached"
+        else:
+            detail = _edge_label(
+                conn,
+                snapshot_id,
+                int(edge[0]),
+                int(edge[1]),
+                int(edge[2]) if edge[2] is not None else None,
+                str(edge[3]) if edge[3] is not None else None,
+            )
+
+        holder = Node(start.lang, parent_addr)
+        chain.append((holder, cur, detail))
+        cur = holder
+
+    return chain
+
+
 def find_root_path(
     db_path: Path,
     addr: str,
@@ -232,11 +347,16 @@ def find_root_path(
     include_weak: bool = False,
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
+    js_exclude_keywords_csv: Optional[str] = None,
+    use_cache: bool = True,
+    cache_profile: str = "default",
 ) -> Dict[str, object]:
     target_addr = _parse_addr(addr)
 
     conn = db.connect(db_path)
     try:
+        # Keep compatibility for existing DBs when new cache tables are introduced.
+        db.init_schema(conn)
         if js_snapshot_id is None:
             js_snapshot_id = _fetch_latest_snapshot_id(conn, "heapsnapshot")
         if kt_snapshot_id is None:
@@ -244,6 +364,7 @@ def find_root_path(
 
         js_root_types = _split_csv(js_root_types_csv) or set(DEFAULT_JS_ROOT_TYPES)
         kt_root_types = _split_csv(kt_root_types_csv) or set(DEFAULT_KT_ROOT_TYPES)
+        js_exclude_keywords = _split_keywords_csv(js_exclude_keywords_csv)
 
         starts: List[Tuple[Node, int]] = []
         if lang is not None:
@@ -280,6 +401,35 @@ def find_root_path(
             }
 
         for start, snapshot_id in starts:
+            if use_cache:
+                cached = _cached_path_from_root_distance(
+                    conn,
+                    snapshot_id=snapshot_id,
+                    start=start,
+                    cache_profile=cache_profile,
+                )
+                if cached is not None:
+                    if not cached:
+                        return {
+                            "found": True,
+                            "addr": target_addr,
+                            "lang": LANG_NAME[start.lang],
+                            "snapshot_id": snapshot_id,
+                            "root": start,
+                            "path": [],
+                            "source": "root_distance_cache",
+                        }
+                    root_node = cached[-1][0]
+                    return {
+                        "found": True,
+                        "addr": target_addr,
+                        "lang": LANG_NAME[start.lang],
+                        "snapshot_id": snapshot_id,
+                        "root": root_node,
+                        "path": cached,
+                        "source": "root_distance_cache",
+                    }
+
             if _is_root(conn, snapshot_id, start, js_root_types, kt_root_types):
                 return {
                     "found": True,
@@ -288,6 +438,7 @@ def find_root_path(
                     "snapshot_id": snapshot_id,
                     "root": start,
                     "path": [],
+                    "source": "bfs",
                 }
 
             q = deque()
@@ -309,6 +460,13 @@ def find_root_path(
                     include_weak=include_weak,
                 ):
                     holder = redge.holder
+                    if holder.lang == LANG_JS and js_exclude_keywords:
+                        tname = _node_type(conn, snapshot_id, holder)
+                        oname = _node_name(conn, snapshot_id, holder)
+                        if _keyword_match(tname, js_exclude_keywords) or _keyword_match(
+                            oname, js_exclude_keywords
+                        ):
+                            continue
                     if holder in visited:
                         continue
                     visited.add(holder)
@@ -330,6 +488,7 @@ def find_root_path(
                     "snapshot_id": snapshot_id,
                     "root": found_root,
                     "path": chain,
+                    "source": "bfs",
                 }
 
         return {

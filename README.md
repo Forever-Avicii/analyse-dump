@@ -119,11 +119,28 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli find-root-path \
   --max-fanout 512
 ```
 
+Inspect JS object properties (including array values like `knapi_refs_test`):
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli inspect-js-props \
+  --db ./out/heap.db \
+  --addr 1020039
+```
+
+Search Kotlin holders by a value (OQL-like field-value lookup):
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli search-kt-by-value \
+  --db ./out/heap.db \
+  --value 0x5d0b7b6a60
+```
+
 ## TODO
 
 - Replace type-name root heuristics with real GC root extraction from snapshots (both HPROF and ArkTS heapsnapshot).
 - Populate and use a real `roots` table, then make `find-root-path` stop on true roots instead of heuristics.
 - Add cross-language orchestration command: run JS/Kotlin root-path search step-by-step through `xrefs/cross_links` bridges.
+- Improve cross-language orchestration command (`analyze-chain`) with richer bridge scoring/filtering and stronger false-positive controls.
 - Support Top-K shortest root paths (not only one shortest path), with stable ordering and deduped output.
 - Add configurable pseudo-root behavior (`addr in {0,1}`) instead of hardcoded default.
 - Improve root-path labeling: include decoded field/property names for each hop with clearer source/target semantics.

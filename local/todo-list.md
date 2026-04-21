@@ -5,7 +5,7 @@
 - [x] 1. Tool protocol unification (`ok/data/error/metrics`) and unified executor
 - [x] 2. Agent loop runnable end-to-end
 - [x] 3. `analyze-agent` CLI command available
-- [ ] 4. Baseline scenarios automated in tests
+- [x] 4. Baseline scenarios automated in tests
 
 ## Week 2: Planner + Replan
 

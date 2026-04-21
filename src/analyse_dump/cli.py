@@ -277,6 +277,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_auto_agent.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
     p_auto_agent.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
     p_auto_agent.add_argument("--max-steps", type=int, default=6, help="max agent loop steps")
+    p_auto_agent.add_argument("--max-seconds", type=float, default=None, help="max agent runtime seconds")
     p_auto_agent.add_argument("--max-depth", type=int, default=12, help="max root search depth")
     p_auto_agent.add_argument("--max-fanout", type=int, default=512, help="max fanout per traversal step")
     p_auto_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
@@ -620,6 +621,7 @@ def main() -> None:
             },
             executor=executor,
             max_steps=args.max_steps,
+            max_seconds=args.max_seconds,
         )
         if args.json:
             print(state_to_json_text(state))

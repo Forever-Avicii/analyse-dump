@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from .planner import create_plan
@@ -54,6 +55,7 @@ def run_agent(
     context: Dict[str, Any],
     executor: ToolExecutor,
     max_steps: int = 6,
+    max_seconds: float | None = None,
 ) -> AgentState:
     state = AgentState(goal=goal, context=dict(context))
     addr, lang = _extract_addr_lang(goal, context)
@@ -67,8 +69,9 @@ def run_agent(
     common = _common_args(context, addr, lang)
     plan_steps = create_plan(goal=goal, context=context, lang=lang)
     state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+    start_ts = time.perf_counter()
 
-    while not should_stop(state, max_steps=max_steps):
+    while not should_stop(state, max_steps=max_steps, start_ts=start_ts, max_seconds=max_seconds):
         if state.plan_cursor >= len(plan_steps):
             state.concluded = True
             state.conclusion_status = "inconclusive"
@@ -217,9 +220,4 @@ def run_agent(
                 state.confidence = "low"
             break
 
-    if not state.concluded and len(state.steps) >= max_steps:
-        state.concluded = True
-        state.conclusion_status = "inconclusive"
-        state.summary = "Stopped due to step budget limit."
-        state.confidence = "low"
     return state

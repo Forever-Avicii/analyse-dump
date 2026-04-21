@@ -309,6 +309,57 @@ def _bridge_candidates_from_kt_root(
     return out
 
 
+def _js_node_text(
+    conn,
+    js_snapshot_id: int,
+    addr: int,
+    cache: Dict[int, str],
+) -> str:
+    cached = cache.get(addr)
+    if cached is not None:
+        return cached
+    row = conn.execute(
+        """
+        SELECT LOWER(COALESCE(o.type_name, '')), LOWER(COALESCE(hs.value, ''))
+        FROM objects o
+        LEFT JOIN heap_strings hs
+          ON hs.snapshot_id = o.snapshot_id
+         AND hs.string_index = o.name_index
+        WHERE o.snapshot_id = ?
+          AND o.lang = ?
+          AND o.obj_addr = ?
+        LIMIT 1
+        """,
+        (js_snapshot_id, LANG_JS, addr),
+    ).fetchone()
+    if row is None:
+        text = ""
+    else:
+        text = f"{str(row[0])} {str(row[1])}"
+    cache[addr] = text
+    return text
+
+
+def _candidate_rank(
+    conn,
+    js_snapshot_id: int,
+    cand: Dict[str, object],
+    keywords: List[str],
+    js_node_text_cache: Dict[int, str],
+) -> Tuple[int, int, int]:
+    to_node = cand["to"]
+    is_deprioritized = 0
+    if to_node.lang == LANG_JS and keywords:
+        text = _js_node_text(conn, js_snapshot_id, to_node.addr, js_node_text_cache)
+        for k in keywords:
+            if k and k in text:
+                is_deprioritized = 1
+                break
+    # Prefer non-deprioritized branches first, then loop branches, then deterministic address order.
+    kind_rank = 0 if str(cand.get("kind")) == "loop" else 1
+    return (is_deprioritized, kind_rank, int(to_node.addr))
+
+
 def analyze_chain(
     db_path: Path,
     addr: str,
@@ -331,8 +382,6 @@ def analyze_chain(
     max_branch_candidates: int = 4,
     top_k: int = 1,
 ) -> Dict[str, object]:
-    del js_deprioritize_keywords_csv  # reserved for future ranking policies
-
     lang_norm = lang.strip().lower()
     if lang_norm not in LANG_BY_NAME:
         raise ValueError("--lang must be js or kotlin")
@@ -355,6 +404,8 @@ def analyze_chain(
         kt_holders_cache: Dict[Tuple[str, int], List[int]] = {}
         kt_stable_cache: Dict[int, List[int]] = {}
         js_owner_by_stable_cache: Dict[int, List[int]] = {}
+        js_node_text_cache: Dict[int, str] = {}
+        js_deprioritize_keywords = [x.strip().lower() for x in js_deprioritize_keywords_csv.split(",") if x.strip()]
         wanted = max(1, int(top_k))
 
         def _collect(result: Dict[str, object]) -> None:
@@ -496,8 +547,16 @@ def analyze_chain(
                         break
                     continue
 
-                loop_candidates = [c for c in candidates if str(c.get("kind")) == "loop"]
-                ordered = loop_candidates + [c for c in candidates if str(c.get("kind")) != "loop"]
+                ordered = sorted(
+                    candidates,
+                    key=lambda c: _candidate_rank(
+                        conn=conn,
+                        js_snapshot_id=int(js_snapshot_id),
+                        cand=c,
+                        keywords=js_deprioritize_keywords,
+                        js_node_text_cache=js_node_text_cache,
+                    ),
+                )
 
                 for cand in ordered[: max(1, max_branch_candidates)]:
                     from_node = cand["from"]

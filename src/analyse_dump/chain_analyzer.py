@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from analyse_dump import db
 from analyse_dump.const import (
@@ -159,49 +159,71 @@ def _bridge_candidates_from_js_anchor(
     js_napi_prop: str,
     kt_napi_field: str,
     max_candidates: int,
+    js_ref_values_cache: Dict[int, List[int]],
+    kt_holders_cache: Dict[Tuple[str, int], List[int]],
 ) -> List[Dict[str, object]]:
-    prop_rows = conn.execute(
-        """
-        SELECT e.to_obj_addr
-        FROM edges e
-        JOIN heap_strings hs
-          ON hs.snapshot_id = e.snapshot_id
-         AND hs.string_index = e.name_num
-        WHERE e.snapshot_id = ?
-          AND e.from_obj_addr = ?
-          AND e.edge_type = ?
-          AND e.name_kind = ?
-          AND hs.value = ?
-        LIMIT 32
-        """,
-        (js_snapshot_id, anchor.addr, EDGE_PROPERTY, NAME_KIND_STRING_INDEX, js_napi_prop),
-    ).fetchall()
-    if not prop_rows:
-        return []
+    ref_values = js_ref_values_cache.get(anchor.addr)
+    if ref_values is None:
+        prop_rows = conn.execute(
+            """
+            SELECT e.to_obj_addr
+            FROM edges e
+            JOIN heap_strings hs
+              ON hs.snapshot_id = e.snapshot_id
+             AND hs.string_index = e.name_num
+            WHERE e.snapshot_id = ?
+              AND e.from_obj_addr = ?
+              AND e.edge_type = ?
+              AND e.name_kind = ?
+              AND hs.value = ?
+            LIMIT 32
+            """,
+            (js_snapshot_id, anchor.addr, EDGE_PROPERTY, NAME_KIND_STRING_INDEX, js_napi_prop),
+        ).fetchall()
+        if not prop_rows:
+            js_ref_values_cache[anchor.addr] = []
+            return []
 
-    ref_values: List[int] = []
-    for (container_addr,) in prop_rows:
-        ref_values.extend(_js_array_ref_values(conn, js_snapshot_id, int(container_addr)))
-    ref_values = sorted(set(ref_values))
+        ref_values = []
+        for (container_addr,) in prop_rows:
+            ref_values.extend(_js_array_ref_values(conn, js_snapshot_id, int(container_addr)))
+        ref_values = sorted(set(ref_values))
+        js_ref_values_cache[anchor.addr] = ref_values
     if not ref_values:
         return []
 
     out: List[Dict[str, object]] = []
-    for ref_value in ref_values:
-        holder_rows = conn.execute(
-            """
-            SELECT DISTINCT f.obj_addr
+    unresolved = [v for v in ref_values if (kt_napi_field, v) not in kt_holders_cache]
+    chunk_size = 300
+    for i in range(0, len(unresolved), chunk_size):
+        chunk = unresolved[i : i + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT f.obj_addr, f.field_value_int
             FROM object_fields f
             WHERE f.snapshot_id = ?
               AND f.lang = ?
               AND f.field_name = ?
-              AND f.field_value_int = ?
-            ORDER BY f.obj_addr
-            LIMIT 256
+              AND f.field_value_int IN ({placeholders})
+            ORDER BY f.field_value_int, f.obj_addr
+            LIMIT 8192
             """,
-            (kt_snapshot_id, LANG_KOTLIN, kt_napi_field, ref_value),
+            (kt_snapshot_id, LANG_KOTLIN, kt_napi_field, *chunk),
         ).fetchall()
-        for (kt_addr,) in holder_rows:
+        bucket: Dict[int, List[int]] = {v: [] for v in chunk}
+        for obj_addr_raw, ref_value_raw in rows:
+            if ref_value_raw is None:
+                continue
+            rv = int(ref_value_raw)
+            if rv not in bucket:
+                continue
+            bucket[rv].append(int(obj_addr_raw))
+        for rv, holder_addrs in bucket.items():
+            kt_holders_cache[(kt_napi_field, rv)] = holder_addrs
+
+    for ref_value in ref_values:
+        for kt_addr in kt_holders_cache.get((kt_napi_field, ref_value), []):
             target = SimpleNode(LANG_KOTLIN, int(kt_addr))
             kind = "loop" if target in visited else "jump"
             out.append(
@@ -226,41 +248,51 @@ def _bridge_candidates_from_kt_root(
     root: SimpleNode,
     visited: Set[SimpleNode],
     max_candidates: int,
+    kt_stable_cache: Dict[int, List[int]],
+    js_owner_by_stable_cache: Dict[int, List[int]],
 ) -> List[Dict[str, object]]:
-    ref_rows = conn.execute(
-        """
-        SELECT DISTINCT ref_addr
-        FROM xrefs
-        WHERE snapshot_id = ?
-          AND lang = ?
-          AND owner_obj_addr = ?
-          AND ref_kind = ?
-        ORDER BY ref_addr
-        LIMIT 256
-        """,
-        (kt_snapshot_id, LANG_KOTLIN, root.addr, REF_KIND_STABLE_REF),
-    ).fetchall()
-    if not ref_rows:
-        return []
-
-    out: List[Dict[str, object]] = []
-    for (ref_addr_raw,) in ref_rows:
-        ref_addr = int(ref_addr_raw)
-        js_rows = conn.execute(
+    ref_addrs = kt_stable_cache.get(root.addr)
+    if ref_addrs is None:
+        ref_rows = conn.execute(
             """
-            SELECT owner_obj_addr
+            SELECT DISTINCT ref_addr
             FROM xrefs
             WHERE snapshot_id = ?
               AND lang = ?
-              AND ref_addr = ?
+              AND owner_obj_addr = ?
               AND ref_kind = ?
-            ORDER BY owner_obj_addr
+            ORDER BY ref_addr
             LIMIT 256
             """,
-            (js_snapshot_id, LANG_JS, ref_addr, REF_KIND_STABLE_REF),
+            (kt_snapshot_id, LANG_KOTLIN, root.addr, REF_KIND_STABLE_REF),
         ).fetchall()
-        for (js_addr_raw,) in js_rows:
-            target = SimpleNode(LANG_JS, int(js_addr_raw))
+        ref_addrs = [int(ref_addr_raw) for (ref_addr_raw,) in ref_rows]
+        kt_stable_cache[root.addr] = ref_addrs
+    if not ref_addrs:
+        return []
+
+    out: List[Dict[str, object]] = []
+    for ref_addr in ref_addrs:
+        js_owners = js_owner_by_stable_cache.get(ref_addr)
+        if js_owners is None:
+            js_rows = conn.execute(
+                """
+                SELECT owner_obj_addr
+                FROM xrefs
+                WHERE snapshot_id = ?
+                  AND lang = ?
+                  AND ref_addr = ?
+                  AND ref_kind = ?
+                ORDER BY owner_obj_addr
+                LIMIT 256
+                """,
+                (js_snapshot_id, LANG_JS, ref_addr, REF_KIND_STABLE_REF),
+            ).fetchall()
+            js_owners = [int(js_addr_raw) for (js_addr_raw,) in js_rows]
+            js_owner_by_stable_cache[ref_addr] = js_owners
+
+        for js_addr in js_owners:
+            target = SimpleNode(LANG_JS, js_addr)
             kind = "loop" if target in visited else "jump"
             out.append(
                 {
@@ -317,6 +349,10 @@ def analyze_chain(
             _SearchState(current=start, visited={start}, segments=[], bridges=[])
         ]
         terminals: List[Dict[str, object]] = []
+        js_ref_values_cache: Dict[int, List[int]] = {}
+        kt_holders_cache: Dict[Tuple[str, int], List[int]] = {}
+        kt_stable_cache: Dict[int, List[int]] = {}
+        js_owner_by_stable_cache: Dict[int, List[int]] = {}
 
         for step in range(1, max_steps + 1):
             next_frontier: List[_SearchState] = []
@@ -420,6 +456,8 @@ def analyze_chain(
                         js_napi_prop=js_napi_prop,
                         kt_napi_field=kt_napi_field,
                         max_candidates=max(1, max_branch_candidates),
+                        js_ref_values_cache=js_ref_values_cache,
+                        kt_holders_cache=kt_holders_cache,
                     )
                 else:
                     candidates = _bridge_candidates_from_kt_root(
@@ -429,6 +467,8 @@ def analyze_chain(
                         root=root_node,
                         visited=visited,
                         max_candidates=max(1, max_branch_candidates),
+                        kt_stable_cache=kt_stable_cache,
+                        js_owner_by_stable_cache=js_owner_by_stable_cache,
                     )
 
                 if not candidates:

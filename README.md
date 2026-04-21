@@ -172,6 +172,7 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain \
   --db ./out/heap.db \
   --addr 1954511 \
   --lang js \
+  --top-k 3 \
   --roots-mode native \
   --max-steps 3 \
   --max-depth 12 \

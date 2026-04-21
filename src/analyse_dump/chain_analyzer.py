@@ -329,6 +329,7 @@ def analyze_chain(
     js_cache_profile: Optional[str] = None,
     kt_cache_profile: Optional[str] = None,
     max_branch_candidates: int = 4,
+    top_k: int = 1,
 ) -> Dict[str, object]:
     del js_deprioritize_keywords_csv  # reserved for future ranking policies
 
@@ -349,10 +350,16 @@ def analyze_chain(
             _SearchState(current=start, visited={start}, segments=[], bridges=[])
         ]
         terminals: List[Dict[str, object]] = []
+        collected: List[Dict[str, object]] = []
         js_ref_values_cache: Dict[int, List[int]] = {}
         kt_holders_cache: Dict[Tuple[str, int], List[int]] = {}
         kt_stable_cache: Dict[int, List[int]] = {}
         js_owner_by_stable_cache: Dict[int, List[int]] = {}
+        wanted = max(1, int(top_k))
+
+        def _collect(result: Dict[str, object]) -> None:
+            if len(collected) < wanted:
+                collected.append(result)
 
         for step in range(1, max_steps + 1):
             next_frontier: List[_SearchState] = []
@@ -412,38 +419,44 @@ def analyze_chain(
                 )
 
                 if not seg.get("found"):
-                    terminals.append(
-                        {
-                            "verdict": "inconclusive",
-                            "reason": str(seg.get("reason", "root_path_not_found")),
-                            "segments": segments,
-                            "bridges": bridges,
-                        }
-                    )
+                    entry = {
+                        "verdict": "inconclusive",
+                        "reason": str(seg.get("reason", "root_path_not_found")),
+                        "segments": segments,
+                        "bridges": bridges,
+                    }
+                    terminals.append(entry)
+                    _collect(entry)
+                    if len(collected) >= wanted:
+                        break
                     continue
 
                 root = seg.get("root")
                 if root is None:
-                    terminals.append(
-                        {
-                            "verdict": "inconclusive",
-                            "reason": "segment_missing_root",
-                            "segments": segments,
-                            "bridges": bridges,
-                        }
-                    )
+                    entry = {
+                        "verdict": "inconclusive",
+                        "reason": "segment_missing_root",
+                        "segments": segments,
+                        "bridges": bridges,
+                    }
+                    terminals.append(entry)
+                    _collect(entry)
+                    if len(collected) >= wanted:
+                        break
                     continue
                 root_node = SimpleNode(int(root.lang), int(root.addr))  # type: ignore[attr-defined]
                 anchor_node = _segment_anchor(seg)
                 if anchor_node is None:
-                    terminals.append(
-                        {
-                            "verdict": "inconclusive",
-                            "reason": "segment_missing_anchor",
-                            "segments": segments,
-                            "bridges": bridges,
-                        }
-                    )
+                    entry = {
+                        "verdict": "inconclusive",
+                        "reason": "segment_missing_anchor",
+                        "segments": segments,
+                        "bridges": bridges,
+                    }
+                    terminals.append(entry)
+                    _collect(entry)
+                    if len(collected) >= wanted:
+                        break
                     continue
 
                 if current.lang == LANG_JS:
@@ -472,13 +485,15 @@ def analyze_chain(
                     )
 
                 if not candidates:
-                    terminals.append(
-                        {
-                            "verdict": "reached_terminal_root",
-                            "segments": segments,
-                            "bridges": bridges,
-                        }
-                    )
+                    entry = {
+                        "verdict": "reached_terminal_root",
+                        "segments": segments,
+                        "bridges": bridges,
+                    }
+                    terminals.append(entry)
+                    _collect(entry)
+                    if len(collected) >= wanted:
+                        break
                     continue
 
                 loop_candidates = [c for c in candidates if str(c.get("kind")) == "loop"]
@@ -506,11 +521,16 @@ def analyze_chain(
                     )
 
                     if cand["kind"] == "loop":
-                        return {
-                            "verdict": "loop_detected",
-                            "segments": segments,
-                            "bridges": next_bridges,
-                        }
+                        _collect(
+                            {
+                                "verdict": "loop_detected",
+                                "segments": segments,
+                                "bridges": next_bridges,
+                            }
+                        )
+                        if len(collected) >= wanted:
+                            break
+                        continue
 
                     next_visited = set(visited)
                     next_visited.add(to_node)
@@ -522,25 +542,43 @@ def analyze_chain(
                             bridges=next_bridges,
                         )
                     )
+                if len(collected) >= wanted:
+                    break
+            if len(collected) >= wanted:
+                break
 
             if not next_frontier:
                 break
             frontier = next_frontier[: max(1, max_branch_candidates)]
 
-        if terminals:
-            return terminals[0]
-        if frontier:
-            return {
-                "verdict": "inconclusive",
-                "reason": "max_steps_reached",
-                "segments": frontier[0].segments,
-                "bridges": frontier[0].bridges,
-            }
-        return {
-            "verdict": "inconclusive",
-            "reason": "max_steps_reached",
-            "segments": [],
-            "bridges": [],
-        }
+        if not collected:
+            if terminals:
+                collected.append(terminals[0])
+            elif frontier:
+                collected.append(
+                    {
+                        "verdict": "inconclusive",
+                        "reason": "max_steps_reached",
+                        "segments": frontier[0].segments,
+                        "bridges": frontier[0].bridges,
+                    }
+                )
+            else:
+                collected.append(
+                    {
+                        "verdict": "inconclusive",
+                        "reason": "max_steps_reached",
+                        "segments": [],
+                        "bridges": [],
+                    }
+                )
+
+        primary = collected[0]
+        if wanted > 1:
+            out = dict(primary)
+            out["results"] = collected
+            out["result_count"] = len(collected)
+            return out
+        return primary
     finally:
         conn.close()

@@ -180,6 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chain.add_argument("--js-cache-profile", type=str, default=None, help="optional JS cache profile override")
     p_chain.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
     p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
+    p_chain.add_argument("--top-k", type=int, default=1, help="return top-k terminal/loop branches")
     p_chain.add_argument("--json", action="store_true", help="output full analyze-chain result as JSON")
     p_chain.add_argument("--narrative", action="store_true", help="print narrative summary after structured output")
     p_chain.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
@@ -201,6 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("--js-cache-profile", type=str, default=None, help="optional JS cache profile override")
     p_agent.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
     p_agent.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
+    p_agent.add_argument("--top-k", type=int, default=1, help="return top-k terminal/loop branches")
     p_agent.add_argument("--json", action="store_true", help="output agent analysis as JSON")
     p_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
@@ -434,6 +436,7 @@ def main() -> None:
             js_cache_profile=args.js_cache_profile,
             kt_cache_profile=args.kt_cache_profile,
             max_branch_candidates=args.max_branch_candidates,
+            top_k=args.top_k,
         )
         if args.json:
             print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
@@ -474,6 +477,8 @@ def main() -> None:
                 f"anchor={anchor_lang}:{_format_addr(anchor_lang, int(b.get('anchor_addr', b['from_addr'])))} "
                 f"evidence={b.get('evidence', '-')}"
             )
+        if args.top_k > 1:
+            print(f"result_count={result.get('result_count', 1)}")
         return
 
     if args.command == "analyze-chain-agent":
@@ -496,6 +501,7 @@ def main() -> None:
             js_cache_profile=args.js_cache_profile,
             kt_cache_profile=args.kt_cache_profile,
             max_branch_candidates=args.max_branch_candidates,
+            top_k=args.top_k,
         )
         if args.json:
             print(json.dumps(result, default=str, ensure_ascii=False, indent=2))

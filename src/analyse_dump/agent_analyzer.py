@@ -79,6 +79,7 @@ def run_agent_analysis(
     js_cache_profile: Optional[str] = None,
     kt_cache_profile: Optional[str] = None,
     max_branch_candidates: int = 4,
+    top_k: int = 1,
 ) -> Dict[str, object]:
     chain = analyze_chain(
         db_path=db_path,
@@ -99,6 +100,7 @@ def run_agent_analysis(
         js_cache_profile=js_cache_profile,
         kt_cache_profile=kt_cache_profile,
         max_branch_candidates=max_branch_candidates,
+        top_k=top_k,
     )
 
     conn = db.connect(db_path)

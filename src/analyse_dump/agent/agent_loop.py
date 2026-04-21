@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from .memory.case_memory import persist_case
 from .memory.session_memory import SessionMemory
 from .planner import create_plan
 from .replan import maybe_replan
@@ -228,4 +230,9 @@ def run_agent(
                 state.confidence = "low"
             break
 
+    if context.get("persist_case_memory", True):
+        try:
+            state.case_id = persist_case(Path(str(context["db"])), state)
+        except Exception as exc:  # pragma: no cover - persistence should not break core flow
+            state.case_memory_error = str(exc)
     return state

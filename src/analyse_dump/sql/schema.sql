@@ -143,3 +143,29 @@ ON root_distance_cache(snapshot_id, lang, profile, dist);
 
 CREATE INDEX IF NOT EXISTS idx_heap_strings_snapshot_value
 ON heap_strings(snapshot_id, value);
+
+CREATE TABLE IF NOT EXISTS agent_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal TEXT NOT NULL,
+  summary TEXT,
+  conclusion_status TEXT,
+  confidence TEXT,
+  step_count INTEGER NOT NULL DEFAULT 0,
+  replan_count INTEGER NOT NULL DEFAULT 0,
+  dedup_skips INTEGER NOT NULL DEFAULT 0,
+  db_path TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_case_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_id INTEGER NOT NULL,
+  evidence TEXT NOT NULL,
+  FOREIGN KEY(case_id) REFERENCES agent_cases(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_cases_created
+ON agent_cases(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_case_evidence_case
+ON agent_case_evidence(case_id);

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from analyse_dump import db
 from analyse_dump.agent_analyzer import run_agent_analysis
@@ -20,6 +21,64 @@ def _format_addr(lang: str, addr: int) -> str:
     if lang == "js":
         return str(int(addr))
     return f"0x{int(addr):x}"
+
+
+def _node_to_json(node: Any) -> Any:
+    if node is None:
+        return None
+    if isinstance(node, dict) and "lang" in node and "addr" in node:
+        lang_raw = node.get("lang")
+        lang = "js" if int(lang_raw) == 0 else ("kotlin" if int(lang_raw) == 1 else str(lang_raw))
+        return {"lang": lang, "addr": int(node.get("addr", 0)), "addr_hex": _format_addr(lang, int(node.get("addr", 0)))}
+    if hasattr(node, "lang") and hasattr(node, "addr"):
+        lang_code = int(getattr(node, "lang"))
+        addr = int(getattr(node, "addr"))
+        lang = "js" if lang_code == 0 else "kotlin"
+        return {"lang": lang, "addr": addr, "addr_hex": _format_addr(lang, addr)}
+    return node
+
+
+def _root_result_to_json(root_result: dict) -> dict:
+    out = dict(root_result)
+    out["root"] = _node_to_json(root_result.get("root"))
+    raw_path = root_result.get("path", [])
+    path = []
+    for i, item in enumerate(raw_path, start=1):
+        if isinstance(item, (list, tuple)) and len(item) == 3:
+            holder, held, detail = item
+            path.append(
+                {
+                    "edge_id": i,
+                    "holder": _node_to_json(holder),
+                    "held": _node_to_json(held),
+                    "label": str(detail),
+                }
+            )
+        else:
+            path.append(item)
+    out["path"] = path
+    return out
+
+
+def _chain_result_to_json(result: dict) -> dict:
+    out = dict(result)
+
+    def _normalize_one(entry: dict) -> dict:
+        e = dict(entry)
+        segs = []
+        for seg in e.get("segments", []):
+            s = dict(seg)
+            rr = s.get("root_result")
+            if isinstance(rr, dict):
+                s["root_result"] = _root_result_to_json(rr)
+            segs.append(s)
+        e["segments"] = segs
+        return e
+
+    out = _normalize_one(out)
+    if isinstance(out.get("results"), list):
+        out["results"] = [_normalize_one(r) if isinstance(r, dict) else r for r in out["results"]]
+    return out
 
 
 def _render_chain_narrative(result: dict) -> str:
@@ -439,7 +498,7 @@ def main() -> None:
             top_k=args.top_k,
         )
         if args.json:
-            print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+            print(json.dumps(_chain_result_to_json(result), ensure_ascii=False, indent=2))
             if args.narrative:
                 print("---")
                 print(_render_chain_narrative(result))
@@ -504,7 +563,11 @@ def main() -> None:
             top_k=args.top_k,
         )
         if args.json:
-            print(json.dumps(result, default=str, ensure_ascii=False, indent=2))
+            out = dict(result)
+            chain = out.get("chain")
+            if isinstance(chain, dict):
+                out["chain"] = _chain_result_to_json(chain)
+            print(json.dumps(out, ensure_ascii=False, indent=2))
             return
 
         print(f"summary={result['summary']}")

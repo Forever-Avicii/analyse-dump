@@ -3,7 +3,7 @@
 ## Week 1: Lightweight Closed Loop
 
 - [x] 1. Tool protocol unification (`ok/data/error/metrics`) and unified executor
-- [ ] 2. Agent loop runnable end-to-end
+- [x] 2. Agent loop runnable end-to-end
 - [ ] 3. `analyze-agent` CLI command available
 - [ ] 4. Baseline scenarios automated in tests
 

@@ -135,12 +135,12 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli search-kt-by-value \
   --value 0x5d0b7b6a60
 ```
 
-Materialize `roots` table (`native|heuristic|mixed`, default `mixed`):
+Materialize `roots` table (`native|heuristic|mixed`, default `native`):
 
 ```bash
 PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-roots \
   --db ./out/heap.db \
-  --roots-mode mixed
+  --roots-mode native
 ```
 
 JS root rule used in `native` mode:
@@ -156,13 +156,13 @@ Build distance-to-root cache:
 PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-root-distance \
   --db ./out/heap.db \
   --lang js \
-  --roots-mode mixed \
+  --roots-mode native \
   --js-root-types __never_match__
 
 PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-root-distance \
   --db ./out/heap.db \
   --lang kotlin \
-  --roots-mode mixed
+  --roots-mode native
 ```
 
 Analyze cross-language chains:
@@ -172,7 +172,7 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain \
   --db ./out/heap.db \
   --addr 1954511 \
   --lang js \
-  --roots-mode mixed \
+  --roots-mode native \
   --max-steps 3 \
   --max-depth 12 \
   --max-fanout 512
@@ -196,7 +196,7 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain-agent \
   --db ./out/heap.db \
   --addr 1954511 \
   --lang js \
-  --roots-mode mixed
+  --roots-mode native
 ```
 
 ## TODO

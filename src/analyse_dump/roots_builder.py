@@ -22,7 +22,7 @@ def build_roots(
     db_path: Path,
     js_snapshot_id: Optional[int] = None,
     kt_snapshot_id: Optional[int] = None,
-    roots_mode: str = "mixed",
+    roots_mode: str = "native",
 ) -> Dict[str, object]:
     mode = roots_mode.strip().lower()
     if mode not in {"native", "heuristic", "mixed"}:

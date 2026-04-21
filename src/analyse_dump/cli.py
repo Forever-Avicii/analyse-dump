@@ -104,7 +104,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_roots.add_argument("--db", required=True, type=Path, help="SQLite db path")
     p_roots.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
     p_roots.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
-    p_roots.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
+    p_roots.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
     p_dist = sub.add_parser("build-root-distance", help="precompute distance-to-root cache by language")
     p_dist.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -117,7 +117,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dist.add_argument("--js-root-types", type=str, default=None, help="comma-separated JS root type names")
     p_dist.add_argument("--kt-root-types", type=str, default=None, help="comma-separated Kotlin root type names")
     p_dist.add_argument("--profile", type=str, default=None, help="optional cache profile override")
-    p_dist.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
+    p_dist.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
     p_path = sub.add_parser("find-root-path", help="find shortest holder path from object to language root")
     p_path.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -132,7 +132,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_path.add_argument("--kt-root-types", type=str, default=None, help="comma-separated Kotlin root type names")
     p_path.add_argument("--no-cache", action="store_true", help="disable root_distance cache and force BFS")
     p_path.add_argument("--cache-profile", type=str, default=None, help="optional cache profile override")
-    p_path.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
+    p_path.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
     p_jsprops = sub.add_parser("inspect-js-props", help="inspect JS object properties and array values")
     p_jsprops.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -182,7 +182,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
     p_chain.add_argument("--json", action="store_true", help="output full analyze-chain result as JSON")
     p_chain.add_argument("--narrative", action="store_true", help="print narrative summary after structured output")
-    p_chain.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
+    p_chain.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
     p_agent = sub.add_parser("analyze-chain-agent", help="agent-style diagnosis on top of analyze-chain output")
     p_agent.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -202,7 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
     p_agent.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
     p_agent.add_argument("--json", action="store_true", help="output agent analysis as JSON")
-    p_agent.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
+    p_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
 
     return parser
 
@@ -337,6 +337,13 @@ def main() -> None:
         root = result["root"]
         root_lang = "js" if root.lang == 0 else "kotlin"
         print(f"root={root_lang}:{_format_addr(root_lang, int(root.addr))}")
+        if result.get("root_evidence"):
+            ev = result["root_evidence"]
+            print(
+                "root_evidence="
+                f"kind={ev.get('root_kind', '-')},source={ev.get('source', '-')},"
+                f"confidence={ev.get('confidence', '-')},meta={ev.get('meta_json', '-')}"
+            )
 
         path = result["path"]
         if not path:

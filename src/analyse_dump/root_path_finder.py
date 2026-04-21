@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
+import json
 
 from analyse_dump import db
 from analyse_dump.const import (
@@ -132,6 +133,36 @@ def _node_exists(conn, snapshot_id: int, node: Node) -> bool:
         (snapshot_id, node.lang, node.addr),
     ).fetchone()
     return row is not None
+
+
+def _root_evidence(conn, snapshot_id: int, node: Node) -> Optional[Dict[str, object]]:
+    row = conn.execute(
+        """
+        SELECT root_kind, source, confidence, meta_json
+        FROM roots
+        WHERE snapshot_id = ?
+          AND lang = ?
+          AND obj_addr = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (snapshot_id, node.lang, node.addr),
+    ).fetchone()
+    if row is None:
+        return None
+    meta_raw = row[3]
+    meta_json: Optional[object] = None
+    if meta_raw is not None:
+        try:
+            meta_json = json.loads(str(meta_raw))
+        except Exception:
+            meta_json = str(meta_raw)
+    return {
+        "root_kind": (str(row[0]) if row[0] is not None else None),
+        "source": (str(row[1]) if row[1] is not None else None),
+        "confidence": (str(row[2]) if row[2] is not None else None),
+        "meta_json": meta_json,
+    }
 
 
 def _edge_label(
@@ -398,7 +429,7 @@ def find_root_path(
     js_exclude_keywords_csv: Optional[str] = None,
     use_cache: bool = True,
     cache_profile: str = "default",
-    roots_mode: str = "mixed",
+    roots_mode: str = "native",
 ) -> Dict[str, object]:
     target_addr = _parse_addr(addr)
 
@@ -467,6 +498,7 @@ def find_root_path(
                             "root": start,
                             "path": [],
                             "source": "root_distance_cache",
+                            "root_evidence": _root_evidence(conn, snapshot_id, start),
                         }
                     root_node = cached[-1][0]
                     return {
@@ -477,6 +509,7 @@ def find_root_path(
                         "root": root_node,
                         "path": cached,
                         "source": "root_distance_cache",
+                        "root_evidence": _root_evidence(conn, snapshot_id, root_node),
                     }
 
             if _is_root(conn, snapshot_id, start, js_root_types, kt_root_types, roots_mode):
@@ -488,6 +521,7 @@ def find_root_path(
                     "root": start,
                     "path": [],
                     "source": "bfs",
+                    "root_evidence": _root_evidence(conn, snapshot_id, start),
                 }
 
             q = deque()
@@ -539,6 +573,7 @@ def find_root_path(
                     "root": found_root,
                     "path": chain,
                     "source": "bfs",
+                    "root_evidence": _root_evidence(conn, snapshot_id, found_root),
                 }
 
         return {

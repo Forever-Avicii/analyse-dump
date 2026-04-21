@@ -22,7 +22,7 @@ def make_cache_profile(
     include_weak: bool,
     include_shortcut: bool,
     root_types_csv: Optional[str],
-    roots_mode: str = "mixed",
+    roots_mode: str = "native",
     profile_override: Optional[str] = None,
 ) -> str:
     if profile_override is not None and profile_override.strip():
@@ -248,7 +248,7 @@ def build_root_distance(
     db_path: Path,
     lang: str,
     profile: str = "default",
-    roots_mode: str = "mixed",
+    roots_mode: str = "native",
     snapshot_id: Optional[int] = None,
     include_weak: bool = False,
     include_shortcut: bool = False,

@@ -71,7 +71,7 @@ def run_agent_analysis(
     max_fanout: int = 512,
     include_weak: bool = False,
     include_shortcut: bool = False,
-    roots_mode: str = "mixed",
+    roots_mode: str = "native",
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
     js_napi_prop: str = "knapi_refs_test",

@@ -10,3 +10,4 @@ out/
 *.egg-info/
 setup.py
 docs/*.local.md
+/local*

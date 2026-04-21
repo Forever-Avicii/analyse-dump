@@ -143,6 +143,13 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-roots \
   --roots-mode mixed
 ```
 
+JS root rule used in `native` mode:
+
+- `is_user_root(node)`: `node.type_name != 'synthetic'` OR `node.name == '(Document DOM trees)'`
+- `distance_from_runtime_anchor == 1`: approximated as an incoming edge from anchor node `0` or `1`
+
+This means JS roots are treated as user-facing GC roots, not the raw anchor nodes themselves.
+
 Build distance-to-root cache:
 
 ```bash

@@ -69,6 +69,11 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="analyse-dump",
         description="Offline importers for HPROF and V8/ArkTS heapsnapshot -> SQLite",
     )
+    parser.add_argument(
+        "--include-shortcut",
+        action="store_true",
+        help="globally include shortcut edges in graph traversals/cache build",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init-db", help="initialize database schema")
@@ -106,6 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dist.add_argument("--lang", required=True, type=str, help="js or kotlin")
     p_dist.add_argument("--snapshot-id", type=int, default=None, help="explicit snapshot id")
     p_dist.add_argument("--include-weak", action="store_true", help="include weak edges while building cache")
+    p_dist.add_argument("--engine", type=str, default="sql", help="distance build engine: sql or memory")
     p_dist.add_argument("--max-fanout", type=int, default=20000, help="max outgoing edges expanded per node")
     p_dist.add_argument("--batch-size", type=int, default=20000, help="insert batch size")
     p_dist.add_argument("--js-root-types", type=str, default=None, help="comma-separated JS root type names")
@@ -266,6 +272,7 @@ def main() -> None:
             profile=make_cache_profile(
                 lang=args.lang,
                 include_weak=args.include_weak,
+                include_shortcut=args.include_shortcut,
                 root_types_csv=(args.js_root_types if args.lang.strip().lower() == "js" else args.kt_root_types),
                 roots_mode=args.roots_mode,
                 profile_override=args.profile,
@@ -273,6 +280,8 @@ def main() -> None:
             roots_mode=args.roots_mode,
             snapshot_id=args.snapshot_id,
             include_weak=args.include_weak,
+            include_shortcut=args.include_shortcut,
+            engine=args.engine,
             max_fanout=args.max_fanout,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,
@@ -281,6 +290,7 @@ def main() -> None:
         lang_name = "js" if int(result["lang"]) == 0 else "kotlin"
         print(
             f"built=true lang={lang_name} snapshot_id={result['snapshot_id']} profile={result['profile']} "
+            f"engine={result['engine']} "
             f"roots={result['roots']} nodes={result['nodes']}"
         )
         return
@@ -295,12 +305,14 @@ def main() -> None:
             max_depth=args.max_depth,
             max_fanout=args.max_fanout,
             include_weak=args.include_weak,
+            include_shortcut=args.include_shortcut,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,
             use_cache=not args.no_cache,
             cache_profile=make_cache_profile(
                 lang=(args.lang or "js"),
                 include_weak=args.include_weak,
+                include_shortcut=args.include_shortcut,
                 root_types_csv=(args.js_root_types if (args.lang or "").strip().lower() == "js" else args.kt_root_types),
                 roots_mode=args.roots_mode,
                 profile_override=args.cache_profile,
@@ -405,6 +417,7 @@ def main() -> None:
             max_depth=args.max_depth,
             max_fanout=args.max_fanout,
             include_weak=args.include_weak,
+            include_shortcut=args.include_shortcut,
             roots_mode=args.roots_mode,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,
@@ -467,6 +480,7 @@ def main() -> None:
             max_depth=args.max_depth,
             max_fanout=args.max_fanout,
             include_weak=args.include_weak,
+            include_shortcut=args.include_shortcut,
             roots_mode=args.roots_mode,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,

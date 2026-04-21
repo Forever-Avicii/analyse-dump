@@ -43,6 +43,7 @@ def build_roots(
         if js_snapshot_id is not None:
             conn.execute("DELETE FROM roots WHERE snapshot_id = ? AND lang = ?", (int(js_snapshot_id), LANG_JS))
 
+            # Heuristic JS roots by type (legacy fallback / mixed supplement).
             js_rows = conn.execute(
                 """
                 SELECT DISTINCT obj_addr, type_name
@@ -53,15 +54,37 @@ def build_roots(
                 """,
                 (int(js_snapshot_id), LANG_JS),
             ).fetchall()
-            pseudo_rows = conn.execute(
+
+            # Native-style JS user roots:
+            # is_user_root(node) := (not synthetic) OR (synthetic and name == '(Document DOM trees)')
+            # and distance-to-runtime-anchor == 1, approximated as incoming edge from anchor 0/1.
+            js_user_root_rows = conn.execute(
                 """
-                SELECT DISTINCT obj_addr
-                FROM objects
-                WHERE snapshot_id = ?
-                  AND lang = ?
-                  AND obj_addr IN (0, 1)
+                SELECT DISTINCT o.obj_addr, o.type_name, NULL AS name_value
+                FROM edges e
+                JOIN objects o
+                  ON o.snapshot_id = e.snapshot_id
+                 AND o.lang = ?
+                 AND o.obj_addr = e.to_obj_addr
+                WHERE e.snapshot_id = ?
+                  AND e.from_obj_addr IN (0, 1)
+                  AND o.type_name != 'synthetic'
+                UNION
+                SELECT DISTINCT o.obj_addr, o.type_name, hs.value AS name_value
+                FROM edges e
+                JOIN objects o
+                  ON o.snapshot_id = e.snapshot_id
+                 AND o.lang = ?
+                 AND o.obj_addr = e.to_obj_addr
+                JOIN heap_strings hs
+                  ON hs.snapshot_id = o.snapshot_id
+                 AND hs.string_index = o.name_index
+                WHERE e.snapshot_id = ?
+                  AND e.from_obj_addr IN (0, 1)
+                  AND o.type_name = 'synthetic'
+                  AND hs.value = '(Document DOM trees)'
                 """,
-                (int(js_snapshot_id), LANG_JS),
+                (LANG_JS, int(js_snapshot_id), LANG_JS, int(js_snapshot_id)),
             ).fetchall()
 
             rows = []
@@ -84,12 +107,20 @@ def build_roots(
                         int(js_snapshot_id),
                         LANG_JS,
                         int(obj_addr),
-                        "pseudo_root",
-                        "native_v8_anchor",
-                        "medium",
-                        json.dumps({"anchor_addr": int(obj_addr)}, ensure_ascii=True),
+                        "user_root_d1",
+                        "native_v8_user_root",
+                        "high",
+                        json.dumps(
+                            {
+                                "is_user_root": True,
+                                "distance_from_runtime_anchor": 1,
+                                "raw_type": (str(type_name) if type_name is not None else None),
+                                "name": (str(name_val) if name_val is not None else None),
+                            },
+                            ensure_ascii=True,
+                        ),
                     )
-                    for (obj_addr,) in pseudo_rows
+                    for (obj_addr, type_name, name_val) in js_user_root_rows
                 )
             if rows:
                 db.insert_roots(conn, rows)

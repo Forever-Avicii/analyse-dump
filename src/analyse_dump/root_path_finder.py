@@ -166,14 +166,39 @@ def _incoming_edges(
     node: Node,
     max_fanout: int,
     include_weak: bool,
+    include_shortcut: bool,
 ) -> List[RetainEdge]:
-    if include_weak:
+    if include_weak and include_shortcut:
         rows = conn.execute(
             """
             SELECT from_obj_addr, edge_type, name_kind, name_num, name_text
             FROM edges
             WHERE snapshot_id = ?
               AND to_obj_addr = ?
+            LIMIT ?
+            """,
+            (snapshot_id, node.addr, max_fanout),
+        ).fetchall()
+    elif include_weak and not include_shortcut:
+        rows = conn.execute(
+            """
+            SELECT from_obj_addr, edge_type, name_kind, name_num, name_text
+            FROM edges
+            WHERE snapshot_id = ?
+              AND to_obj_addr = ?
+              AND edge_type != 6
+            LIMIT ?
+            """,
+            (snapshot_id, node.addr, max_fanout),
+        ).fetchall()
+    elif not include_weak and include_shortcut:
+        rows = conn.execute(
+            """
+            SELECT from_obj_addr, edge_type, name_kind, name_num, name_text
+            FROM edges
+            WHERE snapshot_id = ?
+              AND to_obj_addr = ?
+              AND edge_type != 7
             LIMIT ?
             """,
             (snapshot_id, node.addr, max_fanout),
@@ -185,7 +210,7 @@ def _incoming_edges(
             FROM edges
             WHERE snapshot_id = ?
               AND to_obj_addr = ?
-              AND edge_type != 7
+              AND edge_type NOT IN (6, 7)
             LIMIT ?
             """,
             (snapshot_id, node.addr, max_fanout),
@@ -367,6 +392,7 @@ def find_root_path(
     max_depth: int = 16,
     max_fanout: int = 512,
     include_weak: bool = False,
+    include_shortcut: bool = False,
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
     js_exclude_keywords_csv: Optional[str] = None,
@@ -481,6 +507,7 @@ def find_root_path(
                     cur,
                     max_fanout=max_fanout,
                     include_weak=include_weak,
+                    include_shortcut=include_shortcut,
                 ):
                     holder = redge.holder
                     if holder.lang == LANG_JS and js_exclude_keywords:

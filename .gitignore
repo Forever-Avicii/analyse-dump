@@ -9,3 +9,4 @@ out/
 .deps/
 *.egg-info/
 setup.py
+docs/*.local.md

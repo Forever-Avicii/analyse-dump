@@ -287,6 +287,7 @@ def analyze_chain(
     max_depth: int = 16,
     max_fanout: int = 512,
     include_weak: bool = False,
+    include_shortcut: bool = False,
     roots_mode: str = "mixed",
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
@@ -334,6 +335,7 @@ def analyze_chain(
                     cache_profile = make_cache_profile(
                         lang="js",
                         include_weak=include_weak,
+                        include_shortcut=include_shortcut,
                         root_types_csv=js_root_types_for_step,
                         roots_mode=roots_mode,
                         profile_override=js_cache_profile,
@@ -342,6 +344,7 @@ def analyze_chain(
                     cache_profile = make_cache_profile(
                         lang="kotlin",
                         include_weak=include_weak,
+                        include_shortcut=include_shortcut,
                         root_types_csv=kt_root_types_csv,
                         roots_mode=roots_mode,
                         profile_override=kt_cache_profile,
@@ -356,6 +359,7 @@ def analyze_chain(
                     max_depth=max_depth,
                     max_fanout=max_fanout,
                     include_weak=include_weak,
+                    include_shortcut=include_shortcut,
                     js_root_types_csv=js_root_types_for_step,
                     kt_root_types_csv=kt_root_types_csv,
                     use_cache=True,

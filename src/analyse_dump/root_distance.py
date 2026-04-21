@@ -20,6 +20,7 @@ DEFAULT_JS_PSEUDO_ROOT_ADDRS = {0, 1}
 def make_cache_profile(
     lang: str,
     include_weak: bool,
+    include_shortcut: bool,
     root_types_csv: Optional[str],
     roots_mode: str = "mixed",
     profile_override: Optional[str] = None,
@@ -29,7 +30,10 @@ def make_cache_profile(
     lang_norm = lang.strip().lower()
     mode = roots_mode.strip().lower()
     roots = (root_types_csv or "default").strip()
-    return f"v1|lang={lang_norm}|weak={1 if include_weak else 0}|mode={mode}|roots={roots}"
+    return (
+        f"v1|lang={lang_norm}|weak={1 if include_weak else 0}"
+        f"|shortcut={1 if include_shortcut else 0}|mode={mode}|roots={roots}"
+    )
 
 
 def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> int:
@@ -86,6 +90,8 @@ def _load_roots(
         ).fetchall()
         if rows:
             return sorted({int(r[0]) for r in rows})
+        if mode == "native":
+            return []
 
     if lang_code == LANG_JS:
         root_types = _split_csv(js_root_types_csv) or set(DEFAULT_JS_ROOT_TYPES)
@@ -127,9 +133,10 @@ def _iter_outgoing_neighbors(
     snapshot_id: int,
     from_addr: int,
     include_weak: bool,
+    include_shortcut: bool,
     max_fanout: int,
 ) -> Iterable[int]:
-    if include_weak:
+    if include_weak and include_shortcut:
         rows = conn.execute(
             """
             SELECT to_obj_addr
@@ -140,7 +147,19 @@ def _iter_outgoing_neighbors(
             """,
             (snapshot_id, from_addr, max_fanout),
         ).fetchall()
-    else:
+    elif include_weak and not include_shortcut:
+        rows = conn.execute(
+            """
+            SELECT to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+              AND from_obj_addr = ?
+              AND edge_type != 6
+            LIMIT ?
+            """,
+            (snapshot_id, from_addr, max_fanout),
+        ).fetchall()
+    elif not include_weak and include_shortcut:
         rows = conn.execute(
             """
             SELECT to_obj_addr
@@ -152,8 +171,77 @@ def _iter_outgoing_neighbors(
             """,
             (snapshot_id, from_addr, max_fanout),
         ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+              AND from_obj_addr = ?
+              AND edge_type NOT IN (6, 7)
+            LIMIT ?
+            """,
+            (snapshot_id, from_addr, max_fanout),
+        ).fetchall()
     for (to_addr,) in rows:
         yield int(to_addr)
+
+
+def _load_adjacency_in_memory(
+    conn,
+    snapshot_id: int,
+    include_weak: bool,
+    include_shortcut: bool,
+    max_fanout: int,
+) -> Dict[int, List[int]]:
+    if include_weak and include_shortcut:
+        sql = """
+            SELECT from_obj_addr, to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+        """
+        params = (snapshot_id,)
+    elif include_weak and not include_shortcut:
+        sql = """
+            SELECT from_obj_addr, to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+              AND edge_type != 6
+        """
+        params = (snapshot_id,)
+    elif not include_weak and include_shortcut:
+        sql = """
+            SELECT from_obj_addr, to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+              AND edge_type != 7
+        """
+        params = (snapshot_id,)
+    else:
+        sql = """
+            SELECT from_obj_addr, to_obj_addr
+            FROM edges
+            WHERE snapshot_id = ?
+              AND edge_type NOT IN (6, 7)
+        """
+        params = (snapshot_id,)
+
+    adj: Dict[int, List[int]] = {}
+    cur = conn.execute(sql, params)
+    while True:
+        rows = cur.fetchmany(200_000)
+        if not rows:
+            break
+        for from_addr_raw, to_addr_raw in rows:
+            from_addr = int(from_addr_raw)
+            to_addr = int(to_addr_raw)
+            bucket = adj.get(from_addr)
+            if bucket is None:
+                adj[from_addr] = [to_addr]
+                continue
+            if len(bucket) < max_fanout:
+                bucket.append(to_addr)
+    return adj
 
 
 def build_root_distance(
@@ -163,6 +251,8 @@ def build_root_distance(
     roots_mode: str = "mixed",
     snapshot_id: Optional[int] = None,
     include_weak: bool = False,
+    include_shortcut: bool = False,
+    engine: str = "sql",
     max_fanout: int = 20000,
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
@@ -172,6 +262,10 @@ def build_root_distance(
     if lang_norm not in LANG_BY_NAME:
         raise ValueError("--lang must be js or kotlin")
     lang_code = LANG_BY_NAME[lang_norm]
+
+    engine_norm = engine.strip().lower()
+    if engine_norm not in {"sql", "memory"}:
+        raise ValueError("--engine must be sql or memory")
 
     conn = db.connect(db_path)
     try:
@@ -199,16 +293,31 @@ def build_root_distance(
             parent[r] = None
             q.append(r)
 
+        adj: Optional[Dict[int, List[int]]] = None
+        if engine_norm == "memory":
+            adj = _load_adjacency_in_memory(
+                conn,
+                snapshot_id=sid,
+                include_weak=include_weak,
+                include_shortcut=include_shortcut,
+                max_fanout=max_fanout,
+            )
+
         while q:
             cur = q.popleft()
             cur_dist = dist[cur]
-            for nei in _iter_outgoing_neighbors(
-                conn,
-                snapshot_id=sid,
-                from_addr=cur,
-                include_weak=include_weak,
-                max_fanout=max_fanout,
-            ):
+            if adj is not None:
+                neighbors = adj.get(cur, [])
+            else:
+                neighbors = _iter_outgoing_neighbors(
+                    conn,
+                    snapshot_id=sid,
+                    from_addr=cur,
+                    include_weak=include_weak,
+                    include_shortcut=include_shortcut,
+                    max_fanout=max_fanout,
+                )
+            for nei in neighbors:
                 if nei in dist:
                     continue
                 dist[nei] = cur_dist + 1
@@ -246,6 +355,7 @@ def build_root_distance(
             "snapshot_id": sid,
             "lang": lang_code,
             "profile": profile,
+            "engine": engine_norm,
             "roots": len(roots),
             "nodes": len(dist),
         }

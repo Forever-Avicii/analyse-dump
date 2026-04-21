@@ -8,16 +8,6 @@ from analyse_dump.chain_analyzer import analyze_chain
 from analyse_dump.const import LANG_JS, LANG_KOTLIN
 
 
-def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM snapshots WHERE type = ? ORDER BY id DESC LIMIT 1",
-        (snapshot_type,),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"No snapshot found for type={snapshot_type}")
-    return int(row[0])
-
-
 def _node_label(
     conn,
     snapshot_id: int,
@@ -106,9 +96,9 @@ def run_agent_analysis(
     conn = db.connect(db_path)
     try:
         if js_snapshot_id is None:
-            js_snapshot_id = _fetch_latest_snapshot_id(conn, "heapsnapshot")
+            js_snapshot_id = db.fetch_latest_snapshot_id(conn, "heapsnapshot")
         if kt_snapshot_id is None:
-            kt_snapshot_id = _fetch_latest_snapshot_id(conn, "hprof")
+            kt_snapshot_id = db.fetch_latest_snapshot_id(conn, "hprof")
 
         suspects: List[Dict[str, object]] = []
         for b in chain.get("bridges", []):

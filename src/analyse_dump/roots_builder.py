@@ -8,16 +8,6 @@ from analyse_dump import db
 from analyse_dump.const import LANG_JS, LANG_KOTLIN
 
 
-def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> Optional[int]:
-    row = conn.execute(
-        "SELECT id FROM snapshots WHERE type = ? ORDER BY id DESC LIMIT 1",
-        (snapshot_type,),
-    ).fetchone()
-    if row is None:
-        return None
-    return int(row[0])
-
-
 def build_roots(
     db_path: Path,
     js_snapshot_id: Optional[int] = None,
@@ -33,9 +23,9 @@ def build_roots(
         db.init_schema(conn)
 
         if js_snapshot_id is None:
-            js_snapshot_id = _fetch_latest_snapshot_id(conn, "heapsnapshot")
+            js_snapshot_id = db.fetch_latest_snapshot_id(conn, "heapsnapshot", required=False)
         if kt_snapshot_id is None:
-            kt_snapshot_id = _fetch_latest_snapshot_id(conn, "hprof")
+            kt_snapshot_id = db.fetch_latest_snapshot_id(conn, "hprof", required=False)
 
         inserted_js = 0
         inserted_kt = 0

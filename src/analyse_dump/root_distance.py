@@ -36,16 +36,6 @@ def make_cache_profile(
     )
 
 
-def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM snapshots WHERE type = ? ORDER BY id DESC LIMIT 1",
-        (snapshot_type,),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"No snapshot found for type={snapshot_type}")
-    return int(row[0])
-
-
 def _split_csv(values: Optional[str]) -> Optional[Set[str]]:
     if values is None:
         return None
@@ -57,8 +47,8 @@ def _choose_snapshot_id(conn, lang_code: int, snapshot_id: Optional[int]) -> int
     if snapshot_id is not None:
         return int(snapshot_id)
     if lang_code == LANG_JS:
-        return _fetch_latest_snapshot_id(conn, "heapsnapshot")
-    return _fetch_latest_snapshot_id(conn, "hprof")
+        return int(db.fetch_latest_snapshot_id(conn, "heapsnapshot"))
+    return int(db.fetch_latest_snapshot_id(conn, "hprof"))
 
 
 def _load_roots(

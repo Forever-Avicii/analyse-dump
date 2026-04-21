@@ -21,6 +21,23 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
+def fetch_latest_snapshot_id(
+    conn: sqlite3.Connection,
+    snapshot_type: str,
+    *,
+    required: bool = True,
+) -> Optional[int]:
+    row = conn.execute(
+        "SELECT id FROM snapshots WHERE type = ? ORDER BY id DESC LIMIT 1",
+        (snapshot_type,),
+    ).fetchone()
+    if row is None:
+        if required:
+            raise ValueError(f"No snapshot found for type={snapshot_type}")
+        return None
+    return int(row[0])
+
+
 def _migrate_legacy_roots_table(conn: sqlite3.Connection) -> None:
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='roots'"

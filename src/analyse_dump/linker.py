@@ -32,16 +32,6 @@ def _load_config(config_path: Path) -> dict:
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
-def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM snapshots WHERE type = ? ORDER BY id DESC LIMIT 1",
-        (snapshot_type,),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"No snapshot found for type={snapshot_type}")
-    return int(row[0])
-
-
 def _parse_int(value: object, fmt: str) -> Optional[int]:
     if value is None:
         return None
@@ -432,9 +422,9 @@ def link_with_config(
         db.init_schema(conn)
 
         if js_snapshot_id is None:
-            js_snapshot_id = _fetch_latest_snapshot_id(conn, "heapsnapshot")
+            js_snapshot_id = db.fetch_latest_snapshot_id(conn, "heapsnapshot")
         if kt_snapshot_id is None:
-            kt_snapshot_id = _fetch_latest_snapshot_id(conn, "hprof")
+            kt_snapshot_id = db.fetch_latest_snapshot_id(conn, "hprof")
 
         ctx = RuleContext(
             db_path=db_path,

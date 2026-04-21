@@ -30,7 +30,13 @@ def _migrate_legacy_roots_table(conn: sqlite3.Connection) -> None:
 
     cols = conn.execute("PRAGMA table_info(roots)").fetchall()
     col_names = {str(c[1]) for c in cols}
-    if "lang" in col_names and "root_kind" in col_names and "source" in col_names:
+    if (
+        "lang" in col_names
+        and "root_kind" in col_names
+        and "source" in col_names
+        and "confidence" in col_names
+        and "meta_json" in col_names
+    ):
         return
 
     conn.execute("ALTER TABLE roots RENAME TO roots_legacy")
@@ -43,13 +49,25 @@ def _migrate_legacy_roots_table(conn: sqlite3.Connection) -> None:
           obj_addr INTEGER NOT NULL,
           root_kind TEXT,
           source TEXT,
+          confidence TEXT,
+          meta_json TEXT,
           FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
         )
         """
     )
+    legacy_cols = {str(c[1]) for c in conn.execute("PRAGMA table_info(roots_legacy)").fetchall()}
+    has_root_type = "root_type" in legacy_cols
+    has_root_kind = "root_kind" in legacy_cols
+    has_source = "source" in legacy_cols
+    has_confidence = "confidence" in legacy_cols
+    has_meta_json = "meta_json" in legacy_cols
+    root_kind_expr = "rl.root_kind" if has_root_kind else ("rl.root_type" if has_root_type else "NULL")
+    source_expr = "rl.source" if has_source else "'legacy_migrated'"
+    confidence_expr = "rl.confidence" if has_confidence else "'low'"
+    meta_expr = "rl.meta_json" if has_meta_json else "NULL"
     conn.execute(
-        """
-        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source)
+        f"""
+        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source, confidence, meta_json)
         SELECT rl.snapshot_id,
                CASE
                  WHEN s.type = 'heapsnapshot' THEN 0
@@ -57,8 +75,10 @@ def _migrate_legacy_roots_table(conn: sqlite3.Connection) -> None:
                  ELSE -1
                END AS lang,
                rl.obj_addr,
-               rl.root_type,
-               'legacy_migrated'
+               {root_kind_expr},
+               {source_expr},
+               {confidence_expr},
+               {meta_expr}
         FROM roots_legacy rl
         LEFT JOIN snapshots s
           ON s.id = rl.snapshot_id
@@ -144,12 +164,12 @@ def insert_strings(
 
 def insert_roots(
     conn: sqlite3.Connection,
-    rows: Iterable[Tuple[int, int, int, Optional[str], Optional[str]]],
+    rows: Iterable[Tuple[int, int, int, Optional[str], Optional[str], Optional[str], Optional[str]]],
 ) -> None:
     conn.executemany(
         """
-        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO roots(snapshot_id, lang, obj_addr, root_kind, source, confidence, meta_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )

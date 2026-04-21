@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Dict, Optional
 
 from analyse_dump import db
@@ -21,7 +22,12 @@ def build_roots(
     db_path: Path,
     js_snapshot_id: Optional[int] = None,
     kt_snapshot_id: Optional[int] = None,
-) -> Dict[str, int]:
+    roots_mode: str = "mixed",
+) -> Dict[str, object]:
+    mode = roots_mode.strip().lower()
+    if mode not in {"native", "heuristic", "mixed"}:
+        raise ValueError("--roots-mode must be native, heuristic, or mixed")
+
     conn = db.connect(db_path)
     try:
         db.init_schema(conn)
@@ -58,14 +64,33 @@ def build_roots(
                 (int(js_snapshot_id), LANG_JS),
             ).fetchall()
 
-            rows = [
-                (int(js_snapshot_id), LANG_JS, int(obj_addr), str(type_name), "roots_builder")
-                for obj_addr, type_name in js_rows
-            ]
-            rows.extend(
-                (int(js_snapshot_id), LANG_JS, int(obj_addr), "pseudo_root", "roots_builder")
-                for (obj_addr,) in pseudo_rows
-            )
+            rows = []
+            if mode in {"heuristic", "mixed"}:
+                rows.extend(
+                    (
+                        int(js_snapshot_id),
+                        LANG_JS,
+                        int(obj_addr),
+                        str(type_name),
+                        "heuristic_type",
+                        "low",
+                        None,
+                    )
+                    for obj_addr, type_name in js_rows
+                )
+            if mode in {"native", "mixed"}:
+                rows.extend(
+                    (
+                        int(js_snapshot_id),
+                        LANG_JS,
+                        int(obj_addr),
+                        "pseudo_root",
+                        "native_v8_anchor",
+                        "medium",
+                        json.dumps({"anchor_addr": int(obj_addr)}, ensure_ascii=True),
+                    )
+                    for (obj_addr,) in pseudo_rows
+                )
             if rows:
                 db.insert_roots(conn, rows)
                 inserted_js = len(rows)
@@ -87,7 +112,15 @@ def build_roots(
                 (int(kt_snapshot_id), LANG_KOTLIN, "%kotlin.native.internal.StableRef%"),
             ).fetchall()
             rows = [
-                (int(kt_snapshot_id), LANG_KOTLIN, int(obj_addr), str(type_name), "roots_builder")
+                (
+                    int(kt_snapshot_id),
+                    LANG_KOTLIN,
+                    int(obj_addr),
+                    str(type_name),
+                    ("native_hprof_root" if mode in {"native", "mixed"} else "heuristic_type"),
+                    ("medium" if mode in {"native", "mixed"} else "low"),
+                    None,
+                )
                 for obj_addr, type_name in kt_rows
             ]
             if rows:
@@ -100,7 +133,7 @@ def build_roots(
             "kt_snapshot_id": int(kt_snapshot_id) if kt_snapshot_id is not None else -1,
             "js_roots": inserted_js,
             "kt_roots": inserted_kt,
+            "roots_mode": mode,  # type: ignore[typeddict-item]
         }
     finally:
         conn.close()
-

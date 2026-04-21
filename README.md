@@ -69,9 +69,9 @@ Core tables:
 - `roots`
 - `xrefs`
 - `cross_links`
+- `root_distance`
+- `root_distance_cache`
 - `heap_strings`
-
-This step only builds offline import capability. Cross-language link analysis can be added on top.
 
 ## Storage Notes
 
@@ -135,18 +135,74 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli search-kt-by-value \
   --value 0x5d0b7b6a60
 ```
 
+Materialize `roots` table (`native|heuristic|mixed`, default `mixed`):
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-roots \
+  --db ./out/heap.db \
+  --roots-mode mixed
+```
+
+Build distance-to-root cache:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-root-distance \
+  --db ./out/heap.db \
+  --lang js \
+  --roots-mode mixed \
+  --js-root-types __never_match__
+
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli build-root-distance \
+  --db ./out/heap.db \
+  --lang kotlin \
+  --roots-mode mixed
+```
+
+Analyze cross-language chains:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain \
+  --db ./out/heap.db \
+  --addr 1954511 \
+  --lang js \
+  --roots-mode mixed \
+  --max-steps 3 \
+  --max-depth 12 \
+  --max-fanout 512
+```
+
+Structured output + narrative:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain \
+  --db ./out/heap.db \
+  --addr 1954511 \
+  --lang js \
+  --json \
+  --narrative
+```
+
+Agent-style diagnosis:
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain-agent \
+  --db ./out/heap.db \
+  --addr 1954511 \
+  --lang js \
+  --roots-mode mixed
+```
+
 ## TODO
 
-- Replace type-name root heuristics with real GC root extraction from snapshots (both HPROF and ArkTS heapsnapshot).
-- Populate and use a real `roots` table, then make `find-root-path` stop on true roots instead of heuristics.
-- Add cross-language orchestration command: run JS/Kotlin root-path search step-by-step through `xrefs/cross_links` bridges.
-- Improve cross-language orchestration command (`analyze-chain`) with richer bridge scoring/filtering and stronger false-positive controls.
-- Support Top-K shortest root paths (not only one shortest path), with stable ordering and deduped output.
-- Add configurable pseudo-root behavior (`addr in {0,1}`) instead of hardcoded default.
-- Improve root-path labeling: include decoded field/property names for each hop with clearer source/target semantics.
-- Add cycle detection in orchestration layer using visited root/bridge state across languages.
+- Replace heuristic root extraction with true runtime GC root parsing from snapshots (especially ArkTS side).
+- Add root-kind taxonomy and confidence levels in `roots`.
+- Improve branch ranking in `analyze-chain` (prefer business objects, deprioritize framework/global paths).
+- Add Top-K chain outputs instead of returning only the first terminal/loop branch.
+- Improve root-path and chain JSON schema (stable node/edge ids instead of stringified dataclass values).
+- Add stronger dedup/normalization for repeated loops and repeated bridge hops.
+- Improve root-path labeling and explanations with richer field/property context.
 - Add optional dominator-tree based ranking for severity (after true-root pipeline is ready).
-- Add schema constraints/index strategy for long-term quality (e.g., uniqueness guards for object identity per snapshot/lang).
+- Add schema constraints/index strategy for long-term quality (uniqueness guards for object identity per snapshot/lang).
 - Add compact/analysis modes: temporary indexes during extraction, then drop and `VACUUM` for smaller output DB.
 - Expand rule engine for vendor differences (multi-source fields, virtual-node patterns, mixed radix parsing).
 - Add integration tests with synthetic cross-language leak fixtures and expected-path assertions.

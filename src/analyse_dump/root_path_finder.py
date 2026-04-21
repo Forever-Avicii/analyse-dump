@@ -212,25 +212,33 @@ def _is_root(
     node: Node,
     js_root_types: Set[str],
     kt_root_types: Set[str],
+    roots_mode: str,
 ) -> bool:
-    row = conn.execute(
-        """
-        SELECT 1
-        FROM roots
-        WHERE snapshot_id = ?
-          AND lang = ?
-          AND obj_addr = ?
-        LIMIT 1
-        """,
-        (snapshot_id, node.lang, node.addr),
-    ).fetchone()
-    if row is not None:
-        return True
+    mode = roots_mode.strip().lower()
+    if mode not in {"native", "heuristic", "mixed"}:
+        raise ValueError("roots_mode must be native, heuristic, or mixed")
+    if mode in {"native", "mixed"}:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM roots
+            WHERE snapshot_id = ?
+              AND lang = ?
+              AND obj_addr = ?
+            LIMIT 1
+            """,
+            (snapshot_id, node.lang, node.addr),
+        ).fetchone()
+        if row is not None:
+            return True
 
     # In ArkTS snapshots, pseudo root entry nodes commonly appear as addr 0/1.
     # Treat them as root anchors to align with "distance to GC root" semantics.
-    if node.lang == LANG_JS and node.addr in DEFAULT_JS_PSEUDO_ROOT_ADDRS:
+    if mode in {"heuristic", "mixed"} and node.lang == LANG_JS and node.addr in DEFAULT_JS_PSEUDO_ROOT_ADDRS:
         return True
+
+    if mode == "native":
+        return False
 
     tname = _node_type(conn, snapshot_id, node)
     if tname is None:
@@ -364,6 +372,7 @@ def find_root_path(
     js_exclude_keywords_csv: Optional[str] = None,
     use_cache: bool = True,
     cache_profile: str = "default",
+    roots_mode: str = "mixed",
 ) -> Dict[str, object]:
     target_addr = _parse_addr(addr)
 
@@ -444,7 +453,7 @@ def find_root_path(
                         "source": "root_distance_cache",
                     }
 
-            if _is_root(conn, snapshot_id, start, js_root_types, kt_root_types):
+            if _is_root(conn, snapshot_id, start, js_root_types, kt_root_types, roots_mode):
                 return {
                     "found": True,
                     "addr": target_addr,
@@ -486,7 +495,7 @@ def find_root_path(
                     visited.add(holder)
                     parent[holder] = (cur, redge.detail)
 
-                    if _is_root(conn, snapshot_id, holder, js_root_types, kt_root_types):
+                    if _is_root(conn, snapshot_id, holder, js_root_types, kt_root_types, roots_mode):
                         found_root = holder
                         q.clear()
                         break

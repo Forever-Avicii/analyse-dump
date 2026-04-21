@@ -295,7 +295,15 @@ def import_hprof(db_path: Path, hprof_path: Path, batch_size: int = 5000) -> int
             db.insert_roots(
                 conn,
                 [
-                    (snapshot_id, LANG_KOTLIN, int(obj_addr), str(type_name), "hprof_type")
+                    (
+                        snapshot_id,
+                        LANG_KOTLIN,
+                        int(obj_addr),
+                        str(type_name),
+                        "hprof_type",
+                        "medium",
+                        None,
+                    )
                     for obj_addr, type_name in root_rows
                 ],
             )

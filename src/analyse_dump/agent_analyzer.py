@@ -70,6 +70,7 @@ def run_agent_analysis(
     max_depth: int = 16,
     max_fanout: int = 512,
     include_weak: bool = False,
+    roots_mode: str = "mixed",
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
     js_napi_prop: str = "knapi_refs_test",
@@ -88,6 +89,7 @@ def run_agent_analysis(
         max_depth=max_depth,
         max_fanout=max_fanout,
         include_weak=include_weak,
+        roots_mode=roots_mode,
         js_root_types_csv=js_root_types_csv,
         kt_root_types_csv=kt_root_types_csv,
         js_napi_prop=js_napi_prop,
@@ -162,4 +164,3 @@ def run_agent_analysis(
         }
     finally:
         conn.close()
-

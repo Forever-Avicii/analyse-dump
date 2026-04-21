@@ -21,13 +21,15 @@ def make_cache_profile(
     lang: str,
     include_weak: bool,
     root_types_csv: Optional[str],
+    roots_mode: str = "mixed",
     profile_override: Optional[str] = None,
 ) -> str:
     if profile_override is not None and profile_override.strip():
         return profile_override.strip()
     lang_norm = lang.strip().lower()
+    mode = roots_mode.strip().lower()
     roots = (root_types_csv or "default").strip()
-    return f"v1|lang={lang_norm}|weak={1 if include_weak else 0}|roots={roots}"
+    return f"v1|lang={lang_norm}|weak={1 if include_weak else 0}|mode={mode}|roots={roots}"
 
 
 def _fetch_latest_snapshot_id(conn, snapshot_type: str) -> int:
@@ -59,15 +61,20 @@ def _load_roots(
     conn,
     snapshot_id: int,
     lang_code: int,
+    roots_mode: str,
     js_root_types_csv: Optional[str],
     kt_root_types_csv: Optional[str],
 ) -> List[int]:
+    mode = roots_mode.strip().lower()
+    if mode not in {"native", "heuristic", "mixed"}:
+        raise ValueError("roots_mode must be native, heuristic, or mixed")
+
     # If caller explicitly passed root-types override, honor it and bypass roots table.
     has_explicit_override = (
         (lang_code == LANG_JS and js_root_types_csv is not None)
         or (lang_code == LANG_KOTLIN and kt_root_types_csv is not None)
     )
-    if not has_explicit_override:
+    if mode in {"native", "mixed"} and not has_explicit_override:
         rows = conn.execute(
             """
             SELECT DISTINCT obj_addr
@@ -153,6 +160,7 @@ def build_root_distance(
     db_path: Path,
     lang: str,
     profile: str = "default",
+    roots_mode: str = "mixed",
     snapshot_id: Optional[int] = None,
     include_weak: bool = False,
     max_fanout: int = 20000,
@@ -174,6 +182,7 @@ def build_root_distance(
             conn,
             snapshot_id=sid,
             lang_code=lang_code,
+            roots_mode=roots_mode,
             js_root_types_csv=js_root_types_csv,
             kt_root_types_csv=kt_root_types_csv,
         )

@@ -287,6 +287,7 @@ def analyze_chain(
     max_depth: int = 16,
     max_fanout: int = 512,
     include_weak: bool = False,
+    roots_mode: str = "mixed",
     js_root_types_csv: Optional[str] = None,
     kt_root_types_csv: Optional[str] = None,
     js_napi_prop: str = "knapi_refs_test",
@@ -334,6 +335,7 @@ def analyze_chain(
                         lang="js",
                         include_weak=include_weak,
                         root_types_csv=js_root_types_for_step,
+                        roots_mode=roots_mode,
                         profile_override=js_cache_profile,
                     )
                 else:
@@ -341,6 +343,7 @@ def analyze_chain(
                         lang="kotlin",
                         include_weak=include_weak,
                         root_types_csv=kt_root_types_csv,
+                        roots_mode=roots_mode,
                         profile_override=kt_cache_profile,
                     )
 
@@ -357,6 +360,7 @@ def analyze_chain(
                     kt_root_types_csv=kt_root_types_csv,
                     use_cache=True,
                     cache_profile=cache_profile,
+                    roots_mode=roots_mode,
                 )
                 segments.append(
                     {
@@ -496,4 +500,3 @@ def analyze_chain(
         }
     finally:
         conn.close()
-

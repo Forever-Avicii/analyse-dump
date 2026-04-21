@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS roots (
   obj_addr INTEGER NOT NULL,
   root_kind TEXT,
   source TEXT,
+  confidence TEXT,
+  meta_json TEXT,
   FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
 );
 

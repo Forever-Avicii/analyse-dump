@@ -99,6 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_roots.add_argument("--db", required=True, type=Path, help="SQLite db path")
     p_roots.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
     p_roots.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
+    p_roots.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
 
     p_dist = sub.add_parser("build-root-distance", help="precompute distance-to-root cache by language")
     p_dist.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -110,6 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dist.add_argument("--js-root-types", type=str, default=None, help="comma-separated JS root type names")
     p_dist.add_argument("--kt-root-types", type=str, default=None, help="comma-separated Kotlin root type names")
     p_dist.add_argument("--profile", type=str, default=None, help="optional cache profile override")
+    p_dist.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
 
     p_path = sub.add_parser("find-root-path", help="find shortest holder path from object to language root")
     p_path.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -124,6 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_path.add_argument("--kt-root-types", type=str, default=None, help="comma-separated Kotlin root type names")
     p_path.add_argument("--no-cache", action="store_true", help="disable root_distance cache and force BFS")
     p_path.add_argument("--cache-profile", type=str, default=None, help="optional cache profile override")
+    p_path.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
 
     p_jsprops = sub.add_parser("inspect-js-props", help="inspect JS object properties and array values")
     p_jsprops.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -173,6 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chain.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
     p_chain.add_argument("--json", action="store_true", help="output full analyze-chain result as JSON")
     p_chain.add_argument("--narrative", action="store_true", help="print narrative summary after structured output")
+    p_chain.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
 
     p_agent = sub.add_parser("analyze-chain-agent", help="agent-style diagnosis on top of analyze-chain output")
     p_agent.add_argument("--db", required=True, type=Path, help="SQLite db path")
@@ -192,6 +196,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("--kt-cache-profile", type=str, default=None, help="optional Kotlin cache profile override")
     p_agent.add_argument("--max-branch-candidates", type=int, default=4, help="max bridge candidates explored per step")
     p_agent.add_argument("--json", action="store_true", help="output agent analysis as JSON")
+    p_agent.add_argument("--roots-mode", type=str, default="mixed", help="native, heuristic, or mixed")
 
     return parser
 
@@ -245,9 +250,11 @@ def main() -> None:
             db_path=args.db,
             js_snapshot_id=args.js_snapshot_id,
             kt_snapshot_id=args.kt_snapshot_id,
+            roots_mode=args.roots_mode,
         )
         print(
-            f"built=true js_snapshot_id={result['js_snapshot_id']} js_roots={result['js_roots']} "
+            f"built=true roots_mode={result['roots_mode']} "
+            f"js_snapshot_id={result['js_snapshot_id']} js_roots={result['js_roots']} "
             f"kt_snapshot_id={result['kt_snapshot_id']} kt_roots={result['kt_roots']}"
         )
         return
@@ -260,8 +267,10 @@ def main() -> None:
                 lang=args.lang,
                 include_weak=args.include_weak,
                 root_types_csv=(args.js_root_types if args.lang.strip().lower() == "js" else args.kt_root_types),
+                roots_mode=args.roots_mode,
                 profile_override=args.profile,
             ),
+            roots_mode=args.roots_mode,
             snapshot_id=args.snapshot_id,
             include_weak=args.include_weak,
             max_fanout=args.max_fanout,
@@ -293,8 +302,10 @@ def main() -> None:
                 lang=(args.lang or "js"),
                 include_weak=args.include_weak,
                 root_types_csv=(args.js_root_types if (args.lang or "").strip().lower() == "js" else args.kt_root_types),
+                roots_mode=args.roots_mode,
                 profile_override=args.cache_profile,
             ),
+            roots_mode=args.roots_mode,
         )
         if not result["found"]:
             lang_name = str(result.get("lang", args.lang or "kotlin")).lower()
@@ -394,6 +405,7 @@ def main() -> None:
             max_depth=args.max_depth,
             max_fanout=args.max_fanout,
             include_weak=args.include_weak,
+            roots_mode=args.roots_mode,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,
             js_napi_prop=args.js_napi_prop,
@@ -455,6 +467,7 @@ def main() -> None:
             max_depth=args.max_depth,
             max_fanout=args.max_fanout,
             include_weak=args.include_weak,
+            roots_mode=args.roots_mode,
             js_root_types_csv=args.js_root_types,
             kt_root_types_csv=args.kt_root_types,
             js_napi_prop=args.js_napi_prop,

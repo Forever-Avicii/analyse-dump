@@ -202,16 +202,26 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain-agent \
 
 ## TODO
 
-- Replace heuristic root extraction with true runtime GC root parsing from snapshots (especially ArkTS side).
-- Add root-kind taxonomy and confidence levels in `roots`.
-- Improve branch ranking in `analyze-chain` (prefer business objects, deprioritize framework/global paths).
-- Add Top-K chain outputs instead of returning only the first terminal/loop branch.
-- Improve root-path and chain JSON schema (stable node/edge ids instead of stringified dataclass values).
-- Add stronger dedup/normalization for repeated loops and repeated bridge hops.
-- Improve root-path labeling and explanations with richer field/property context.
-- Add optional dominator-tree based ranking for severity (after true-root pipeline is ready).
-- Add schema constraints/index strategy for long-term quality (uniqueness guards for object identity per snapshot/lang).
-- Add compact/analysis modes: temporary indexes during extraction, then drop and `VACUUM` for smaller output DB.
+### Done
+
+- Root semantics default unified to `native` across `build-roots` / `build-root-distance` / `find-root-path` / `analyze-chain`.
+- Root evidence is surfaced in root-path results (`root_kind/source/confidence/meta`).
+- Added root metadata fields in `roots` (`root_kind`, `source`, `confidence`, `meta_json`).
+- Improved branch ranking in `analyze-chain` (business objects preferred, framework/global keywords deprioritized).
+- Added Top-K chain outputs via `--top-k` (`results`, `result_count`).
+
+### In Progress
+
+- Root-path and chain JSON schema stabilization:
+  current output still contains stringified node dataclasses in some JSON paths, needs stable node/edge ids.
+- Stronger dedup/normalization for repeated loops and repeated bridge hops.
+- Root-path labeling/explanations with richer field/property context.
+
+### Next
+
+- Optional dominator-tree based ranking for severity (after root semantics pipeline is fully frozen).
+- Schema constraints/index strategy for long-term quality (uniqueness guards for object identity per snapshot/lang).
+- Compact/analysis modes: temporary indexes during extraction, then drop + `VACUUM` for smaller output DB.
 - Expand rule engine for vendor differences (multi-source fields, virtual-node patterns, mixed radix parsing).
-- Add integration tests with synthetic cross-language leak fixtures and expected-path assertions.
-- Add edge-type policy validation for strong-reference analysis (default exclude weak/shortcut, verify hidden/internal semantics per runtime).
+- Integration tests with synthetic cross-language leak fixtures and expected-path assertions.
+- Edge-type policy validation for strong-reference analysis (default exclude weak/shortcut; verify hidden/internal semantics per runtime).

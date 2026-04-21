@@ -9,7 +9,7 @@
 
 ## Week 2: Planner + Replan
 
-- [ ] 1. Explicit planner generates step plan
+- [x] 1. Explicit planner generates step plan
 - [ ] 2. Replan when tool output conflicts or fails
 - [ ] 3. Budget control (`max_steps`, `max_seconds`)
 

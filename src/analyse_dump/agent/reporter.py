@@ -34,6 +34,9 @@ def state_to_dict(state: AgentState) -> Dict[str, Any]:
 
     return {
         "goal": state.goal,
+        "plan": state.plan,
+        "plan_cursor": state.plan_cursor,
+        "replan_count": state.replan_count,
         "concluded": state.concluded,
         "conclusion_status": state.conclusion_status,
         "summary": state.summary,
@@ -63,4 +66,3 @@ def state_to_text(state: AgentState) -> str:
     if state.last_error:
         lines.append(f"last_error={state.last_error}")
     return "\n".join(lines)
-

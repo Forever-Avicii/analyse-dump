@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional, Tuple
 
+from .planner import create_plan
 from .state import AgentState, AgentStep
 from .stop_policy import should_stop
 from .tool_executor import ToolExecutor
@@ -63,9 +64,19 @@ def run_agent(
         return state
 
     common = _common_args(context, addr, lang)
-    tool_cursor = "analyze_chain"
+    plan = create_plan(goal=goal, context=context, lang=lang)
+    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan]
 
     while not should_stop(state, max_steps=max_steps):
+        if state.plan_cursor >= len(plan):
+            state.concluded = True
+            state.conclusion_status = "inconclusive"
+            state.summary = "Plan exhausted before reaching a confirmed conclusion."
+            state.confidence = "low"
+            break
+
+        tool_cursor = plan[state.plan_cursor].tool_name
+        state.plan_cursor += 1
         if tool_cursor == "analyze_chain":
             args = dict(common)
         elif tool_cursor == "find_root_path":
@@ -81,6 +92,14 @@ def run_agent(
                 "js_snapshot_id": context.get("js_snapshot_id"),
                 "max_props": context.get("max_props", 128),
                 "max_array_elems": context.get("max_array_elems", 64),
+            }
+        elif tool_cursor == "search_kt_by_value":
+            value = context.get("value")
+            args = {
+                "db": context["db"],
+                "value": str(value if value is not None else "0x0"),
+                "kt_snapshot_id": context.get("kt_snapshot_id"),
+                "limit": context.get("limit", 200),
             }
         else:
             state.concluded = True
@@ -120,7 +139,6 @@ def run_agent(
                 state.summary = "No retain loop in explored branches; reached terminal root."
                 state.confidence = "medium"
                 break
-            tool_cursor = "find_root_path"
             continue
 
         if tool_cursor == "find_root_path":
@@ -132,12 +150,6 @@ def run_agent(
                 state.summary = "Found holder path to root."
                 state.confidence = "medium"
                 break
-            if lang == "js":
-                tool_cursor = "inspect_js_props"
-            else:
-                state.concluded = True
-                state.conclusion_status = "inconclusive"
-                state.summary = "Cannot reach root path and no JS property fallback available."
             continue
 
         if tool_cursor == "inspect_js_props":
@@ -154,10 +166,24 @@ def run_agent(
                 state.confidence = "low"
             break
 
+        if tool_cursor == "search_kt_by_value":
+            matches = out.data.get("matches", [])
+            count = len(matches) if isinstance(matches, list) else 0
+            state.evidence.append(f"search_kt_by_value.matches={count}")
+            state.concluded = True
+            if count > 0:
+                state.conclusion_status = "hypothesis"
+                state.summary = "Found Kotlin holder candidates by value search."
+                state.confidence = "medium"
+            else:
+                state.conclusion_status = "inconclusive"
+                state.summary = "No Kotlin holder candidates found by value search."
+                state.confidence = "low"
+            break
+
     if not state.concluded and len(state.steps) >= max_steps:
         state.concluded = True
         state.conclusion_status = "inconclusive"
         state.summary = "Stopped due to step budget limit."
         state.confidence = "low"
     return state
-

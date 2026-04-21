@@ -28,6 +28,7 @@ class AgentState:
     plan: List[Dict[str, str]] = field(default_factory=list)
     plan_cursor: int = 0
     replan_count: int = 0
+    replan_notes: List[str] = field(default_factory=list)
     last_error: Optional[str] = None
 
     def append_step(self, item: AgentStep) -> None:

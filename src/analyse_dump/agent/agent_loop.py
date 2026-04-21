@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, Optional, Tuple
 
 from .planner import create_plan
+from .replan import maybe_replan
 from .state import AgentState, AgentStep
 from .stop_policy import should_stop
 from .tool_executor import ToolExecutor
@@ -64,18 +65,18 @@ def run_agent(
         return state
 
     common = _common_args(context, addr, lang)
-    plan = create_plan(goal=goal, context=context, lang=lang)
-    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan]
+    plan_steps = create_plan(goal=goal, context=context, lang=lang)
+    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
 
     while not should_stop(state, max_steps=max_steps):
-        if state.plan_cursor >= len(plan):
+        if state.plan_cursor >= len(plan_steps):
             state.concluded = True
             state.conclusion_status = "inconclusive"
             state.summary = "Plan exhausted before reaching a confirmed conclusion."
             state.confidence = "low"
             break
 
-        tool_cursor = plan[state.plan_cursor].tool_name
+        tool_cursor = plan_steps[state.plan_cursor].tool_name
         state.plan_cursor += 1
         if tool_cursor == "analyze_chain":
             args = dict(common)
@@ -118,6 +119,19 @@ def run_agent(
             )
         )
         if not out.ok:
+            inserted, reason = maybe_replan(
+                lang=lang,
+                current_tool=tool_cursor,
+                result=out,
+                remaining=plan_steps[state.plan_cursor :],
+            )
+            if inserted:
+                plan_steps[state.plan_cursor : state.plan_cursor] = inserted
+                state.replan_count += 1
+                state.replan_notes.append(str(reason))
+                state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+                continue
+
             state.concluded = True
             state.conclusion_status = "failed"
             state.summary = f"Tool failure at step {step_id}: {state.last_error}"
@@ -127,6 +141,17 @@ def run_agent(
         if tool_cursor == "analyze_chain":
             verdict = str(out.data.get("verdict", "inconclusive"))
             state.evidence.append(f"analyze_chain.verdict={verdict}")
+            inserted, reason = maybe_replan(
+                lang=lang,
+                current_tool=tool_cursor,
+                result=out,
+                remaining=plan_steps[state.plan_cursor :],
+            )
+            if inserted:
+                plan_steps[state.plan_cursor : state.plan_cursor] = inserted
+                state.replan_count += 1
+                state.replan_notes.append(str(reason))
+                state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
             if verdict == "loop_detected":
                 state.concluded = True
                 state.conclusion_status = "confirmed"
@@ -144,6 +169,17 @@ def run_agent(
         if tool_cursor == "find_root_path":
             found = bool(out.data.get("found"))
             state.evidence.append(f"find_root_path.found={found}")
+            inserted, reason = maybe_replan(
+                lang=lang,
+                current_tool=tool_cursor,
+                result=out,
+                remaining=plan_steps[state.plan_cursor :],
+            )
+            if inserted:
+                plan_steps[state.plan_cursor : state.plan_cursor] = inserted
+                state.replan_count += 1
+                state.replan_notes.append(str(reason))
+                state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
             if found:
                 state.concluded = True
                 state.conclusion_status = "confirmed"

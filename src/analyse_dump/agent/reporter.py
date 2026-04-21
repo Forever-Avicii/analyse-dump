@@ -37,6 +37,7 @@ def state_to_dict(state: AgentState) -> Dict[str, Any]:
         "plan": state.plan,
         "plan_cursor": state.plan_cursor,
         "replan_count": state.replan_count,
+        "replan_notes": state.replan_notes,
         "concluded": state.concluded,
         "conclusion_status": state.conclusion_status,
         "summary": state.summary,

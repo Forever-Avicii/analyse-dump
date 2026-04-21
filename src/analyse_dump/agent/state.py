@@ -29,6 +29,7 @@ class AgentState:
     plan_cursor: int = 0
     replan_count: int = 0
     replan_notes: List[str] = field(default_factory=list)
+    dedup_skips: int = 0
     last_error: Optional[str] = None
 
     def append_step(self, item: AgentStep) -> None:

@@ -4,6 +4,7 @@ import re
 import time
 from typing import Any, Dict, Optional, Tuple
 
+from .memory.session_memory import SessionMemory
 from .planner import create_plan
 from .replan import maybe_replan
 from .state import AgentState, AgentStep
@@ -70,6 +71,7 @@ def run_agent(
     plan_steps = create_plan(goal=goal, context=context, lang=lang)
     state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
     start_ts = time.perf_counter()
+    session_memory = SessionMemory()
 
     while not should_stop(state, max_steps=max_steps, start_ts=start_ts, max_seconds=max_seconds):
         if state.plan_cursor >= len(plan_steps):
@@ -110,6 +112,12 @@ def run_agent(
             state.conclusion_status = "inconclusive"
             state.summary = "Agent entered unknown tool path."
             break
+
+        if session_memory.has_seen(tool_cursor, args):
+            session_memory.dedup_skips += 1
+            state.dedup_skips = session_memory.dedup_skips
+            continue
+        session_memory.record(tool_cursor, args)
 
         out = executor.execute(tool_cursor, args)
         step_id = len(state.steps) + 1

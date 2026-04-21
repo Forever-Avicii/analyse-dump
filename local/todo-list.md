@@ -15,7 +15,7 @@
 
 ## Week 3: Memory + Verifier
 
-- [ ] 1. Session memory to avoid repeated exploration
+- [x] 1. Session memory to avoid repeated exploration
 - [ ] 2. Case memory persistence in SQLite
 - [ ] 3. Verifier marks conclusions as `confirmed` vs `hypothesis`
 

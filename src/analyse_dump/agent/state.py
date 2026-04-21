@@ -32,6 +32,7 @@ class AgentState:
     dedup_skips: int = 0
     case_id: int | None = None
     case_memory_error: str | None = None
+    verifier_note: str | None = None
     last_error: Optional[str] = None
 
     def append_step(self, item: AgentStep) -> None:

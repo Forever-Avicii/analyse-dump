@@ -41,6 +41,7 @@ def state_to_dict(state: AgentState) -> Dict[str, Any]:
         "dedup_skips": state.dedup_skips,
         "case_id": state.case_id,
         "case_memory_error": state.case_memory_error,
+        "verifier_note": state.verifier_note,
         "concluded": state.concluded,
         "conclusion_status": state.conclusion_status,
         "summary": state.summary,

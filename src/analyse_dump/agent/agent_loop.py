@@ -12,6 +12,7 @@ from .replan import maybe_replan
 from .state import AgentState, AgentStep
 from .stop_policy import should_stop
 from .tool_executor import ToolExecutor
+from .verifier import verify_state
 
 
 def _extract_addr_lang(goal: str, context: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -229,6 +230,8 @@ def run_agent(
                 state.summary = "No Kotlin holder candidates found by value search."
                 state.confidence = "low"
             break
+
+    verify_state(state)
 
     if context.get("persist_case_memory", True):
         try:

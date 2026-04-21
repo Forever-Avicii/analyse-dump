@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from analyse_dump import db
+from analyse_dump.agent.agent_loop import run_agent
+from analyse_dump.agent.reporter import state_to_json_text, state_to_text
+from analyse_dump.agent.tool_executor import ToolExecutor
+from analyse_dump.agent.tool_registry import default_tool_specs
 from analyse_dump.agent_analyzer import run_agent_analysis
 from analyse_dump.chain_analyzer import analyze_chain
 from analyse_dump.bridge_queries import inspect_js_props, search_kt_by_value
@@ -264,6 +268,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("--top-k", type=int, default=1, help="return top-k terminal/loop branches")
     p_agent.add_argument("--json", action="store_true", help="output agent analysis as JSON")
     p_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
+
+    p_auto_agent = sub.add_parser("analyze-agent", help="autonomous multi-step tool-calling analysis agent")
+    p_auto_agent.add_argument("--db", required=True, type=Path, help="SQLite db path")
+    p_auto_agent.add_argument("--goal", required=True, type=str, help="analysis goal in natural language")
+    p_auto_agent.add_argument("--addr", type=str, default=None, help="optional start object address")
+    p_auto_agent.add_argument("--lang", type=str, default=None, help="optional start language: js or kotlin")
+    p_auto_agent.add_argument("--js-snapshot-id", type=int, default=None, help="explicit JS snapshot id")
+    p_auto_agent.add_argument("--kt-snapshot-id", type=int, default=None, help="explicit Kotlin snapshot id")
+    p_auto_agent.add_argument("--max-steps", type=int, default=6, help="max agent loop steps")
+    p_auto_agent.add_argument("--max-depth", type=int, default=12, help="max root search depth")
+    p_auto_agent.add_argument("--max-fanout", type=int, default=512, help="max fanout per traversal step")
+    p_auto_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
+    p_auto_agent.add_argument("--json", action="store_true", help="output agent run as JSON")
 
     return parser
 
@@ -584,6 +601,30 @@ def main() -> None:
         print("next_actions:")
         for i, action in enumerate(result.get("next_actions", []), start=1):
             print(f"{i}. {action}")
+        return
+
+    if args.command == "analyze-agent":
+        executor = ToolExecutor(default_tool_specs())
+        state = run_agent(
+            goal=args.goal,
+            context={
+                "db": str(args.db),
+                "addr": args.addr,
+                "lang": args.lang,
+                "js_snapshot_id": args.js_snapshot_id,
+                "kt_snapshot_id": args.kt_snapshot_id,
+                "roots_mode": args.roots_mode,
+                "max_depth": args.max_depth,
+                "max_fanout": args.max_fanout,
+                "max_chain_steps": args.max_steps,
+            },
+            executor=executor,
+            max_steps=args.max_steps,
+        )
+        if args.json:
+            print(state_to_json_text(state))
+        else:
+            print(state_to_text(state))
         return
 
     parser.error("Unknown command")

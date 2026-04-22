@@ -70,4 +70,9 @@ def state_to_text(state: AgentState) -> str:
             lines.append(f"{i}. {e}")
     if state.last_error:
         lines.append(f"last_error={state.last_error}")
+    if state.steps:
+        lines.append("steps:")
+        for s in state.steps:
+            note = f" note={s.note}" if s.note else ""
+            lines.append(f"{s.step}. {s.tool_name}{note}")
     return "\n".join(lines)

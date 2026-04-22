@@ -200,6 +200,37 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain-agent \
   --roots-mode native
 ```
 
+Autonomous analysis agent (rule policy):
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-agent \
+  --db ./out/heap.db \
+  --goal "diagnose js addr 1954511" \
+  --addr 1954511 \
+  --lang js \
+  --policy rule \
+  --json
+```
+
+Autonomous analysis agent (LLM policy, current stub):
+
+```bash
+PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-agent \
+  --db ./out/heap.db \
+  --goal "diagnose js addr 1954511" \
+  --addr 1954511 \
+  --lang js \
+  --policy llm \
+  --model gpt-5-mini \
+  --json
+```
+
+Policy fallback behavior:
+
+- If LLM policy emits invalid tool/action, agent records `policy_failure:*` in `replan_notes`.
+- Agent automatically falls back to `rule` policy and continues.
+- Step notes include policy origin, for example: `[llm] ...`, `[rule] ...`, `[fallback] ...`.
+
 ## TODO
 
 ### Done
@@ -209,16 +240,22 @@ PYTHONPATH=src:./.deps python3 -m analyse_dump.cli analyze-chain-agent \
 - Added root metadata fields in `roots` (`root_kind`, `source`, `confidence`, `meta_json`).
 - Improved branch ranking in `analyze-chain` (business objects preferred, framework/global keywords deprioritized).
 - Added Top-K chain outputs via `--top-k` (`results`, `result_count`).
+- Centralized latest-snapshot lookup in shared DB helper (`db.fetch_latest_snapshot_id`).
+- Added autonomous `analyze-agent` loop components: planner/replan/budget/session-memory/case-memory/verifier.
+- Added policy-driven agent execution with `--policy rule|llm`, plus automatic fallback to `rule` on policy failures.
+- Added agent baseline and protocol tests (`tests/test_agent_*.py`).
 
 ### In Progress
 
-- Root-path and chain JSON schema stabilization:
-  current output still contains stringified node dataclasses in some JSON paths, needs stable node/edge ids.
+- Root-path/agent nested result schema stabilization:
+  some nested tool payloads still contain stringified node dataclasses, needs full stable node/edge ids end-to-end.
 - Stronger dedup/normalization for repeated loops and repeated bridge hops.
-- Root-path labeling/explanations with richer field/property context.
+- Verifier hardening: move from heuristic verdict mapping to explicit evidence constraints + counter-evidence checks.
+- Case memory replayability: persist full per-step trajectory (decision input/output/evidence), not only summary-level records.
 
 ### Next
 
+- Connect real LLM backend in `LLMPolicy` (current `llm_client` is a deterministic stub).
 - Optional dominator-tree based ranking for severity (after root semantics pipeline is fully frozen).
 - Schema constraints/index strategy for long-term quality (uniqueness guards for object identity per snapshot/lang).
 - Compact/analysis modes: temporary indexes during extraction, then drop + `VACUUM` for smaller output DB.

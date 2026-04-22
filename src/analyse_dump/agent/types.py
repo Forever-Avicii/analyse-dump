@@ -5,6 +5,14 @@ from typing import Any, Callable, Dict, Mapping
 
 
 @dataclass(frozen=True)
+class ActionDecision:
+    tool_name: str
+    args: Dict[str, Any]
+    reason: str
+    confidence: str = "medium"
+    policy: str = "rule"
+
+@dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str

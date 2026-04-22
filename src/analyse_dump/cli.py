@@ -7,6 +7,8 @@ from typing import Any
 
 from analyse_dump import db
 from analyse_dump.agent.agent_loop import run_agent
+from analyse_dump.agent.llm_client import LLMClient
+from analyse_dump.agent.policy import LLMPolicy, RulePolicy
 from analyse_dump.agent.reporter import state_to_json_text, state_to_text
 from analyse_dump.agent.tool_executor import ToolExecutor
 from analyse_dump.agent.tool_registry import default_tool_specs
@@ -281,6 +283,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_auto_agent.add_argument("--max-depth", type=int, default=12, help="max root search depth")
     p_auto_agent.add_argument("--max-fanout", type=int, default=512, help="max fanout per traversal step")
     p_auto_agent.add_argument("--roots-mode", type=str, default="native", help="native, heuristic, or mixed")
+    p_auto_agent.add_argument("--policy", type=str, default="rule", help="agent decision policy: rule or llm")
+    p_auto_agent.add_argument("--model", type=str, default="gpt-5-mini", help="model name used by llm policy")
+    p_auto_agent.add_argument("--api-base", type=str, default=None, help="optional llm api base url")
     p_auto_agent.add_argument("--json", action="store_true", help="output agent run as JSON")
 
     return parser
@@ -606,6 +611,14 @@ def main() -> None:
 
     if args.command == "analyze-agent":
         executor = ToolExecutor(default_tool_specs())
+        policy_name = str(args.policy).strip().lower()
+        if policy_name not in {"rule", "llm"}:
+            parser.error("--policy must be rule or llm")
+
+        if policy_name == "llm":
+            policy = LLMPolicy(client=LLMClient(base_url=args.api_base), model=args.model)
+        else:
+            policy = RulePolicy()
         state = run_agent(
             goal=args.goal,
             context={
@@ -622,6 +635,8 @@ def main() -> None:
             executor=executor,
             max_steps=args.max_steps,
             max_seconds=args.max_seconds,
+            policy=policy,
+            fallback_policy=RulePolicy(),
         )
         if args.json:
             print(state_to_json_text(state))

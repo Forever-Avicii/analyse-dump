@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .memory.case_memory import persist_case
 from .memory.session_memory import SessionMemory
 from .planner import create_plan
+from .policy import BasePolicy, PolicyContext, RulePolicy
 from .replan import maybe_replan
 from .state import AgentState, AgentStep
 from .stop_policy import should_stop
@@ -60,6 +61,8 @@ def run_agent(
     executor: ToolExecutor,
     max_steps: int = 6,
     max_seconds: float | None = None,
+    policy: BasePolicy | None = None,
+    fallback_policy: BasePolicy | None = None,
 ) -> AgentState:
     state = AgentState(goal=goal, context=dict(context))
     addr, lang = _extract_addr_lang(goal, context)
@@ -71,50 +74,87 @@ def run_agent(
         return state
 
     common = _common_args(context, addr, lang)
-    plan_steps = create_plan(goal=goal, context=context, lang=lang)
-    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+    use_policy_mode = policy is not None or fallback_policy is not None
+    plan_steps: List[Any] = []
+    if not use_policy_mode:
+        plan_steps = create_plan(goal=goal, context=context, lang=lang)
+        state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+
+    active_policy = policy
+    active_fallback = fallback_policy or RulePolicy()
+    pctx = PolicyContext(
+        db=str(context["db"]),
+        addr=addr,
+        lang=lang,
+        js_snapshot_id=context.get("js_snapshot_id"),
+        kt_snapshot_id=context.get("kt_snapshot_id"),
+        roots_mode=str(context.get("roots_mode", "native")),
+        max_depth=int(context.get("max_depth", 12)),
+        max_fanout=int(context.get("max_fanout", 512)),
+        max_chain_steps=int(context.get("max_chain_steps", 6)),
+    )
     start_ts = time.perf_counter()
     session_memory = SessionMemory()
 
     while not should_stop(state, max_steps=max_steps, start_ts=start_ts, max_seconds=max_seconds):
-        if state.plan_cursor >= len(plan_steps):
-            state.concluded = True
-            state.conclusion_status = "inconclusive"
-            state.summary = "Plan exhausted before reaching a confirmed conclusion."
-            state.confidence = "low"
-            break
-
-        tool_cursor = plan_steps[state.plan_cursor].tool_name
-        state.plan_cursor += 1
-        if tool_cursor == "analyze_chain":
-            args = dict(common)
-        elif tool_cursor == "find_root_path":
-            args = {
-                **common,
-                "use_cache": True,
-                "cache_profile": context.get("cache_profile", "default"),
-            }
-        elif tool_cursor == "inspect_js_props":
-            args = {
-                "db": context["db"],
-                "addr": addr,
-                "js_snapshot_id": context.get("js_snapshot_id"),
-                "max_props": context.get("max_props", 128),
-                "max_array_elems": context.get("max_array_elems", 64),
-            }
-        elif tool_cursor == "search_kt_by_value":
-            value = context.get("value")
-            args = {
-                "db": context["db"],
-                "value": str(value if value is not None else "0x0"),
-                "kt_snapshot_id": context.get("kt_snapshot_id"),
-                "limit": context.get("limit", 200),
-            }
+        tool_cursor: str
+        args: Dict[str, Any]
+        step_note = ""
+        if use_policy_mode:
+            try:
+                if active_policy is None:
+                    decision = active_fallback.next_action(state, pctx, executor._tools)  # type: ignore[attr-defined]
+                else:
+                    decision = active_policy.next_action(state, pctx, executor._tools)  # type: ignore[attr-defined]
+                tool_cursor = str(decision.tool_name)
+                args = dict(decision.args)
+                step_note = f"[{decision.policy}] {decision.reason}"
+            except Exception as exc:
+                state.replan_count += 1
+                state.replan_notes.append(f"policy_failure:{exc}")
+                decision = active_fallback.next_action(state, pctx, executor._tools)  # type: ignore[attr-defined]
+                tool_cursor = str(decision.tool_name)
+                args = dict(decision.args)
+                step_note = f"[fallback] {decision.reason}"
         else:
-            state.concluded = True
-            state.conclusion_status = "inconclusive"
-            state.summary = "Agent entered unknown tool path."
-            break
+            if state.plan_cursor >= len(plan_steps):
+                state.concluded = True
+                state.conclusion_status = "inconclusive"
+                state.summary = "Plan exhausted before reaching a confirmed conclusion."
+                state.confidence = "low"
+                break
+
+            tool_cursor = plan_steps[state.plan_cursor].tool_name
+            state.plan_cursor += 1
+            if tool_cursor == "analyze_chain":
+                args = dict(common)
+            elif tool_cursor == "find_root_path":
+                args = {
+                    **common,
+                    "use_cache": True,
+                    "cache_profile": context.get("cache_profile", "default"),
+                }
+            elif tool_cursor == "inspect_js_props":
+                args = {
+                    "db": context["db"],
+                    "addr": addr,
+                    "js_snapshot_id": context.get("js_snapshot_id"),
+                    "max_props": context.get("max_props", 128),
+                    "max_array_elems": context.get("max_array_elems", 64),
+                }
+            elif tool_cursor == "search_kt_by_value":
+                value = context.get("value")
+                args = {
+                    "db": context["db"],
+                    "value": str(value if value is not None else "0x0"),
+                    "kt_snapshot_id": context.get("kt_snapshot_id"),
+                    "limit": context.get("limit", 200),
+                }
+            else:
+                state.concluded = True
+                state.conclusion_status = "inconclusive"
+                state.summary = "Agent entered unknown tool path."
+                break
 
         if session_memory.has_seen(tool_cursor, args):
             session_memory.dedup_skips += 1
@@ -130,21 +170,23 @@ def run_agent(
                 tool_name=tool_cursor,
                 args=args,
                 result=out,
+                note=step_note,
             )
         )
         if not out.ok:
-            inserted, reason = maybe_replan(
-                lang=lang,
-                current_tool=tool_cursor,
-                result=out,
-                remaining=plan_steps[state.plan_cursor :],
-            )
-            if inserted:
-                plan_steps[state.plan_cursor : state.plan_cursor] = inserted
-                state.replan_count += 1
-                state.replan_notes.append(str(reason))
-                state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
-                continue
+            if not use_policy_mode:
+                inserted, reason = maybe_replan(
+                    lang=lang,
+                    current_tool=tool_cursor,
+                    result=out,
+                    remaining=plan_steps[state.plan_cursor :],
+                )
+                if inserted:
+                    plan_steps[state.plan_cursor : state.plan_cursor] = inserted
+                    state.replan_count += 1
+                    state.replan_notes.append(str(reason))
+                    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+                    continue
 
             state.concluded = True
             state.conclusion_status = "failed"
@@ -183,17 +225,18 @@ def run_agent(
         if tool_cursor == "find_root_path":
             found = bool(out.data.get("found"))
             state.evidence.append(f"find_root_path.found={found}")
-            inserted, reason = maybe_replan(
-                lang=lang,
-                current_tool=tool_cursor,
-                result=out,
-                remaining=plan_steps[state.plan_cursor :],
-            )
-            if inserted:
-                plan_steps[state.plan_cursor : state.plan_cursor] = inserted
-                state.replan_count += 1
-                state.replan_notes.append(str(reason))
-                state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
+            if not use_policy_mode:
+                inserted, reason = maybe_replan(
+                    lang=lang,
+                    current_tool=tool_cursor,
+                    result=out,
+                    remaining=plan_steps[state.plan_cursor :],
+                )
+                if inserted:
+                    plan_steps[state.plan_cursor : state.plan_cursor] = inserted
+                    state.replan_count += 1
+                    state.replan_notes.append(str(reason))
+                    state.plan = [{"tool_name": s.tool_name, "reason": s.reason} for s in plan_steps]
             if found:
                 state.concluded = True
                 state.conclusion_status = "confirmed"
